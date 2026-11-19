@@ -764,7 +764,7 @@ async function checkForUpdates(
 ): Promise<void> {
   if (stopped || updateLoading.value) return;
   notifyPreReleases.value = prereleasesEnabled(cfg.notify_pre_releases);
-  const interval = Number(cfg.update_check_interval ?? 86400);
+  const interval = Number(cfg.update_check_interval ?? 0);
   if (Number.isFinite(interval) && interval === 0 && !forced) {
     availableUpdate.value = null;
     availableRelease.value = null;

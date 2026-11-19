@@ -72,7 +72,7 @@ const defaultGroups = [
       global_state_cmd: [] as Array<{ do: string; undo: string; elevated?: boolean }>,
       server_cmd: [] as Array<{ name: string; cmd: string; elevated?: boolean }>,
       notify_pre_releases: 'enabled',
-      update_check_interval: 86400,
+      update_check_interval: 0, // ARBS-H development build: off by default (code kept)
       session_token_ttl_seconds: 86400,
       remember_me_refresh_token_ttl_seconds: 604800,
       system_tray: true,
