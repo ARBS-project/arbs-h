@@ -281,8 +281,8 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            86400
-            @endcode (24 hours)</td>
+            0
+            @endcode (off in ARBS-H development builds; upstream default 86400 = 24 hours)</td>
     </tr>
     <tr>
         <td>Example</td>
@@ -2852,6 +2852,33 @@ PyroWave is unchanged. Example: `pacing_group_demand_limit = true`.
         <td>Example</td>
         <td colspan="2">@code{}
             host_adaptive_pacing = true
+            @endcode</td>
+    </tr>
+</table>
+
+### arbs_enet_precise_time
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            ARBS-H (Windows only). Selects the clock that the control stream's ENet library uses to time its waits.
+            When enabled, ENet uses <code>timeGetTime()</code> like upstream ENet, so the 5 ms control-loop wait used
+            while waveform haptics are active can end on time instead of at the next system tick (about 15.6 ms).
+            When disabled, ENet uses <code>GetTickCount()</code>, which is the original behavior of this build.
+            The value is read once, before the first stream creates the ENet host; restart the host to change it.
+            Each second with haptic PCM activity, the log shows one line starting with
+            <code>ARBS-H 햅틱 요약:</code> (block creation, queue drain and wait-return intervals).
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}enabled@endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            arbs_enet_precise_time = disabled
             @endcode</td>
     </tr>
 </table>

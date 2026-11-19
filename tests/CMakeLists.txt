@@ -2115,6 +2115,8 @@ if(SUNSHINE_TEST_POWERSHELL)
 endif()
 
 sunshine_register_component(NAME test_component_controller_speaker_pcm TEST_SOURCE unit/test_controller_speaker_pcm.cpp)
+# ARBS-H H1-0: header-only PCM haptics timing summary.
+sunshine_register_component(NAME test_component_arbs_haptics_timing TEST_SOURCE unit/test_arbs_haptics_timing.cpp)
 
 sunshine_register_component(NAME test_component_dualsense_audio_pcm TEST_SOURCE unit/test_dualsense_audio_pcm.cpp)
 sunshine_register_component(NAME test_component_dualsense_launch_policy TEST_SOURCE unit/test_dualsense_launch_policy.cpp)

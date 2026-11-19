@@ -144,6 +144,12 @@ namespace net {
   host_t host_create(af_e af, ENetAddress &addr, std::uint16_t port) {
     static std::once_flag enet_init_flag;
     std::call_once(enet_init_flag, []() {
+#ifdef _WIN32
+      // ARBS-H H1-A: choose the ENet clock once, before any ENet host exists.
+      enet_arbs_precise_time = config::stream.arbs_enet_precise_time ? 1 : 0;
+      BOOST_LOG(info) << "ARBS-H ENet 시간원: "sv << (enet_arbs_precise_time ? "timeGetTime"sv : "GetTickCount"sv)
+                      << " (arbs_enet_precise_time="sv << (enet_arbs_precise_time ? "enabled"sv : "disabled"sv) << ')';
+#endif
       enet_initialize();
     });
 

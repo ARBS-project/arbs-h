@@ -3,6 +3,7 @@
 
 #include "dualsense_usbip_gamepad_policy.h"
 #include "dualsense_usbip_transport.h"
+#include "src/arbs_haptics_timing.h"
 #include "src/controller_speaker_pcm.h"
 #include "src/logging.h"
 #include "vhf_gamepad_policy.h"
@@ -283,6 +284,7 @@ namespace platf {
         message.id = client_index;
         message.data.haptics.sequence = pcm_sequence[global_index].fetch_add(1, std::memory_order_relaxed);
         message.data.haptics.samples = samples;
+        arbs::haptics_timing::recorder().block_created(message.id, message.data.haptics.sequence, std::chrono::steady_clock::now());
         // A stalled control connection must not make the USB transport thread
         // block, grow a queue, or clear feedback from another controller.
         bool queued = feedback_queue->try_raise(message);

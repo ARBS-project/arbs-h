@@ -1011,6 +1011,7 @@ namespace config {
 
     0,  // pacing_max_bitrate_kbps (0 = legacy 1 Gbps Ethernet assumption)
     0,  // packetsize (0 = off)
+    true,  // arbs_enet_precise_time (ARBS-H H1-A: timeGetTime ENet clock on Windows)
   };
 
   nvhttp_t nvhttp {
@@ -1129,7 +1130,7 @@ namespace config {
     {},  // server commands
     std::chrono::hours {2},  // session_token_ttl default 2h
     std::chrono::hours {24 * 7},  // remember_me_refresh_token_ttl default 7d
-    86400,  // update_check_interval_seconds default 24h
+    0,  // update_check_interval_seconds: ARBS-H development build default off (code kept)
     true,  // session_history_enabled
     0,  // session_history_ttl_days (disabled by default)
     0  // session_history_db_size_limit_mb (disabled by default)
@@ -2226,6 +2227,7 @@ namespace config {
     bool_f(vars, "pacing_batch_demand_limit", stream.pacing_batch_demand_limit);
     bool_f(vars, "pacing_group_demand_limit", stream.pacing_group_demand_limit);
     bool_f(vars, "host_adaptive_pacing", stream.host_adaptive_pacing);
+    bool_f(vars, "arbs_enet_precise_time", stream.arbs_enet_precise_time);
     if (stream.video_max_batch_size_kb == 0) {
       stream.video_max_batch_size_kb = 64;
     } else if (stream.video_max_batch_size_kb != 16 && stream.video_max_batch_size_kb != 32 && stream.video_max_batch_size_kb != 64) {

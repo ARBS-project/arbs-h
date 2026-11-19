@@ -40,6 +40,7 @@ extern "C" {
 }
 
 // local includes
+#include "arbs_haptics_timing.h"
 #include "config.h"
 #include "control_peer_timeout.h"
 #include "crypto.h"
@@ -1393,6 +1394,8 @@ namespace stream {
       std::array<std::uint8_t, sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(controller_speaker_pcm::payload_size + 4) + crypto::cipher::tag_size> encrypted_payload;
       payload = encode_control(session, std::string_view(reinterpret_cast<const char *>(plaintext->data()), plaintext->size()), encrypted_payload);
     } else if (msg.type == platf::gamepad_feedback_e::haptics_pcm) {
+      // ARBS-H H1-0: the control thread drained this block from the feedback queue.
+      arbs::haptics_timing::recorder().block_drained(msg.id, msg.data.haptics.sequence, std::chrono::steady_clock::now());
       if (!(session->config.mlFeatureFlags & ML_FF_HAPTICS_PCM)) {
         // PCM arrives in frequent chunks; report missing negotiation once per session.
         if (!session->control.pcm_negotiation_warning_logged.exchange(true, std::memory_order_relaxed)) {
@@ -2237,6 +2240,21 @@ namespace stream {
       // Haptic samples and gamepad feedback must keep flowing even when the player
       // is not moving.
       server->iterate(haptics_client ? 5ms : 150ms);
+
+      // ARBS-H H1-0: one summary line per second while PCM haptics flow.
+      {
+        auto &timing = arbs::haptics_timing::recorder();
+        const auto returned = std::chrono::steady_clock::now();
+        timing.iterate_returned(returned);
+        if (const auto summary = timing.take(returned)) {
+#ifdef _WIN32
+          const auto time_source = enet_arbs_precise_time ? "timeGetTime"sv : "GetTickCount"sv;
+#else
+          const auto time_source = "platform"sv;
+#endif
+          BOOST_LOG(info) << arbs::haptics_timing::format_summary(*summary, time_source);
+        }
+      }
     }
 
     // Let all remaining connections know the server is shutting down

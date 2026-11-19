@@ -305,6 +305,10 @@ namespace config {
 
     // Limit the packetsize to avoid fragmentation on a low MTU link. 0 = off.
     int packetsize;
+
+    // ARBS-H H1-A: Windows ENet clock. true = timeGetTime(), false = GetTickCount()
+    // (original behavior). Read once before the first ENet host; restart to change.
+    bool arbs_enet_precise_time;
   };
 
   struct nvhttp_t {
@@ -522,8 +526,9 @@ namespace config {
     std::vector<server_cmd_t> server_cmds;
     std::chrono::seconds session_token_ttl;  ///< Session token time-to-live (seconds)
     std::chrono::seconds remember_me_refresh_token_ttl;  ///< Trusted device (remember-me) refresh TTL
-    // Interval in seconds between automatic update checks (0 disables periodic checks)
-    int update_check_interval_seconds {86400};
+    // Interval in seconds between automatic update checks (0 disables periodic checks).
+    // ARBS-H development build: default 0 (off); the update check code is kept.
+    int update_check_interval_seconds {0};
     bool session_history_enabled {true};  ///< Persist stream/session history to SQLite
     int session_history_ttl_days {0};  ///< Delete ended sessions older than this many days (0 disables age pruning)
     int session_history_db_size_limit_mb {0};  ///< Approximate live DB quota in MiB (0 disables size pruning)
