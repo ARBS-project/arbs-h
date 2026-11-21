@@ -244,6 +244,12 @@ namespace update {
   // update command removed
 
   void on_stream_started() {
+    // ARBS-H B3b [D-B3b-6, provisional]: with automatic checks disabled (interval 0, the ARBS-H
+    // default) a stream start must not check either. trigger_check(true) below skips the interval
+    // test, so the stream-start path tests it here. The tray's manual check is unchanged.
+    if (config::sunshine.update_check_interval_seconds == 0) {
+      return;
+    }
     // Kick a metadata refresh after a small delay but do not auto-execute updates while streaming.
     std::thread([]() {
       std::this_thread::sleep_for(3s);

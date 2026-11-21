@@ -36,6 +36,7 @@
 // local includes
 #include "amf/amf_config_policy.h"
 #include "amf/amf_lifecycle.h"
+#include "arbs_trigger_status.h"  // ARBS-H B3b: arbs_trigger_status value parsing
 #include "config.h"
 #include "control_peer_timeout.h"
 #include "virtual_display_scale.h"
@@ -1062,7 +1063,7 @@ namespace config {
     true,  // native pen/touch support
     false,  // enable input only mode
     true,  // forward_rumble
-    false,  // arbs_trigger_status (ARBS-H H2: DualSense trigger status bytes, default off)
+    0,  // arbs_trigger_status (ARBS-H H2/H2b: DualSense trigger status bytes, 0 = disabled, default)
   };
 
   frame_limiter_t frame_limiter {
@@ -2295,7 +2296,11 @@ namespace config {
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
     bool_f(vars, "legacy_ordering", sunshine.legacy_ordering);
     bool_f(vars, "forward_rumble", input.forward_rumble);
-    bool_f(vars, "arbs_trigger_status", input.arbs_trigger_status);
+    // ARBS-H B3b [D-B3b-H, provisional]: "h2b" -> 2; any other value keeps the b3 boolean
+    // meaning (to_bool), so `enabled` -> 1 and `disabled` -> 0 exactly as before.
+    int_f(vars, "arbs_trigger_status", input.arbs_trigger_status, [](std::string &value) {
+      return arbs::trigger_status::setting_from(value, to_bool(value));
+    });
 
     int port = sunshine.port;
     int_between_f(vars, "port"s, port, {1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT});

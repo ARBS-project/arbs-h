@@ -962,6 +962,11 @@ dualsense_haptics_gain = 1.5
             When disabled, the bytes stay 0 as in the original build. A controller keeps the value it
             was connected with; restart the host or reconnect the controller after changing it.
             The log shows <code>ARBS-H 트리거 상태 응답:</code> when the first controller connects and after each change.
+            The value <code>h2b</code> (ARBS-H B3b, provisional, one trial) writes the same bytes 42/43 as
+            <code>enabled</code> and also byte 48, the active-effect byte: right trigger in the low nibble,
+            left trigger in the high nibble, 1 = Feedback, 2 = Weapon, 3 = Vibration, 0 for any other effect.
+            With <code>h2b</code> the log shows up to 20 lines per controller connection starting with
+            <code>ARBS-H 트리거 상태 바이트</code> whenever these bytes change.
         </td>
     </tr>
     <tr>
@@ -973,6 +978,19 @@ dualsense_haptics_gain = 1.5
         <td colspan="2">@code{}
             arbs_trigger_status = enabled
             @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="3">Choices</td>
+        <td>disabled</td>
+        <td>Encoder bytes unchanged (original behavior).</td>
+    </tr>
+    <tr>
+        <td>enabled</td>
+        <td>Status bytes 42 (right) and 43 (left).</td>
+    </tr>
+    <tr>
+        <td>h2b</td>
+        <td>Status bytes 42/43 plus active-effect byte 48.</td>
     </tr>
 </table>
 

@@ -30,7 +30,8 @@ namespace platf::dualsense_usbip_gamepad {
   // ARBS-H H2 (provisional, default off): fill the input report's adaptive
   // trigger status bytes. The caller passes config::input.arbs_trigger_status
   // before each alloc(); a controller keeps the value it was bound with.
-  void set_trigger_status(bool enabled);
+  // B3b [D-B3b-H, provisional]: 0 disabled / 1 enabled (H2) / 2 h2b (H2 + byte 48).
+  void set_trigger_status(int setting);
 }  // namespace platf::dualsense_usbip_gamepad
 
 namespace platf {

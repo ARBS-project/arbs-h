@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace {
@@ -203,4 +204,123 @@ TEST(ArbsTriggerStatus, T11_SettingOffLeavesEncoderBytesZero) {
       EXPECT_EQ(b[i], 0x00) << "byte " << i << " position " << int(position);
     }
   }
+}
+
+// ---- ARBS-H B3b H2b (provisional [D-B3b-H] / [D-B3b-5], docs/analysis/B3b.md section 4) ----
+
+static_assert(offsetof(lvg::driver::ds5_input_report, reserved2) + 7 == ts::active_effect_offset);
+static_assert(ts::active_effect_offset == 48);
+
+TEST(ArbsTriggerStatus, H2b_EffectNibbleForValidStatusPrograms) {
+  constexpr params_t vibration_3_9 {0xF8, 0x03, 0, 0, 0, 0, 0, 0, 30};
+  EXPECT_EQ(ts::effect_of(ts::mode_feedback, zones_3_9), ts::effect_feedback);
+  EXPECT_EQ(ts::effect_of(ts::mode_weapon, weapon_2_3), ts::effect_weapon);
+  EXPECT_EQ(ts::effect_of(ts::mode_vibration, vibration_3_9), ts::effect_vibration);
+  EXPECT_EQ(ts::effect_feedback, 1);
+  EXPECT_EQ(ts::effect_weapon, 2);
+  EXPECT_EQ(ts::effect_vibration, 3);
+}
+
+TEST(ArbsTriggerStatus, H2b_EffectNibbleZeroWhereStatusBytesAreZero) {
+  constexpr params_t weapon_three_bits {0x0E, 0x00, 0x07};
+  constexpr params_t too_wide {0x00, 0x04};  // mask 0x0400 > 10 bits
+  constexpr params_t vibration_no_frequency {0xF8, 0x03};
+  EXPECT_EQ(ts::effect_of(ts::mode_weapon, weapon_three_bits), 0);
+  EXPECT_EQ(ts::effect_of(ts::mode_weapon, too_wide), 0);
+  EXPECT_EQ(ts::effect_of(ts::mode_feedback, none), 0);  // mask 0
+  EXPECT_EQ(ts::effect_of(ts::mode_feedback, too_wide), 0);
+  EXPECT_EQ(ts::effect_of(ts::mode_vibration, vibration_no_frequency), 0);
+  for (const std::uint8_t mode : {std::uint8_t {0x00}, std::uint8_t {0x01}, std::uint8_t {0x02}, std::uint8_t {ts::mode_off}, std::uint8_t {0x06}, std::uint8_t {0x22}, std::uint8_t {0x23}, std::uint8_t {0x27}, std::uint8_t {0xFC}, std::uint8_t {0x7F}}) {
+    EXPECT_EQ(ts::effect_of(mode, zones_3_9), 0) << int(mode);
+  }
+}
+
+TEST(ArbsTriggerStatus, H2b_ReportByte48RightLowLeftHigh) {
+  constexpr params_t vibration_3_9 {0xF8, 0x03, 0, 0, 0, 0, 0, 0, 30};
+  {
+    // Right Weapon, left Feedback: 48 = 0x12; 42/43 equal the H2 (enabled) result.
+    auto h2 = encoded(77, 255);
+    auto h2b = h2;
+    const auto original = h2;
+    ts::state_t h2_state;
+    ts::state_t h2b_state;
+    h2_state.apply(bytes(h2), ts::mode_weapon, weapon_2_3, ts::mode_feedback, zones_3_9);
+    h2b_state.apply(bytes(h2b), ts::mode_weapon, weapon_2_3, ts::mode_feedback, zones_3_9, true);
+    const auto a = bytes(h2);
+    const auto b = bytes(h2b);
+    const auto *o = reinterpret_cast<const std::uint8_t *>(&original);
+    EXPECT_EQ(b[48], 0x12);
+    EXPECT_EQ(a[48], 0x00);  // enabled: byte 48 untouched, as b3
+    for (std::size_t i = 0; i < sizeof(h2); ++i) {
+      if (i == 48) {
+        continue;
+      }
+      EXPECT_EQ(b[i], a[i]) << i;
+      if (i != 42 && i != 43) {
+        EXPECT_EQ(b[i], o[i]) << i;
+      }
+    }
+    EXPECT_EQ(b[42], 0x29);
+    EXPECT_EQ(b[43], 0x13);  // left Feedback, position 77 = zone 3 inside zones 3..9
+  }
+  {
+    // Right Off, left Vibration: 48 = 0x30. Right Vibration, left Weapon: 0x23.
+    auto report = encoded(0, 0);
+    ts::state_t state;
+    state.apply(bytes(report), ts::mode_off, none, ts::mode_vibration, vibration_3_9, true);
+    EXPECT_EQ(bytes(report)[48], 0x30);
+    state.apply(bytes(report), ts::mode_vibration, vibration_3_9, ts::mode_weapon, weapon_2_3, true);
+    EXPECT_EQ(bytes(report)[48], 0x23);
+    state.apply(bytes(report), ts::mode_off, none, ts::mode_off, none, true);
+    EXPECT_EQ(bytes(report)[48], 0x00);  // reset / other effect
+  }
+  {
+    std::array<std::uint8_t, 48> short_report {};  // 42/43 fit, 48 does not: no write past the end
+    ts::state_t state;
+    short_report[6] = 255;
+    state.apply(short_report, ts::mode_weapon, weapon_2_3, ts::mode_weapon, weapon_2_3, true);
+    EXPECT_EQ(short_report[42], 0x29);
+  }
+}
+
+TEST(ArbsTriggerStatus, H2b_SettingParse) {
+  // `h2b` in any letter case selects H2b; every other value keeps the b3 boolean result.
+  EXPECT_EQ(ts::setting_from("h2b", false), ts::setting_h2b);
+  EXPECT_EQ(ts::setting_from("H2B", false), ts::setting_h2b);
+  EXPECT_EQ(ts::setting_from("H2b", true), ts::setting_h2b);
+  EXPECT_EQ(ts::setting_from("enabled", true), ts::setting_enabled);
+  EXPECT_EQ(ts::setting_from("disabled", false), ts::setting_disabled);
+  EXPECT_EQ(ts::setting_from("h2", false), ts::setting_disabled);
+  EXPECT_EQ(ts::setting_from("h2bx", false), ts::setting_disabled);
+  EXPECT_EQ(ts::setting_from("", false), ts::setting_disabled);
+  EXPECT_EQ(ts::setting_disabled, 0);
+  EXPECT_EQ(ts::setting_enabled, 1);
+  EXPECT_EQ(ts::setting_h2b, 2);
+  EXPECT_EQ(ts::normalized_setting(-1), 0);
+  EXPECT_EQ(ts::normalized_setting(0), 0);
+  EXPECT_EQ(ts::normalized_setting(1), 1);
+  EXPECT_EQ(ts::normalized_setting(2), 2);
+  EXPECT_EQ(ts::normalized_setting(3), 0);
+}
+
+TEST(ArbsTriggerStatus, H2b_DiagnosticLineOnChangeAtMostTwentyPerBinding) {
+  ts::byte_log_t log;
+  std::string line;
+  ASSERT_TRUE(log.next(0, 0x00, 0x00, 0x00, line));  // first report of a binding
+  EXPECT_EQ(line, "ARBS-H 트리거 상태 바이트(패드 0, 1/20): R 0x00 L 0x00 효과 0x00");
+  EXPECT_FALSE(log.next(0, 0x00, 0x00, 0x00, line));  // unchanged: no line
+  ASSERT_TRUE(log.next(0, 0x29, 0x00, 0x02, line));
+  EXPECT_EQ(line, "ARBS-H 트리거 상태 바이트(패드 0, 2/20): R 0x29 L 0x00 효과 0x02");
+  int written = 2;
+  for (int i = 0; i < 40; ++i) {
+    if (log.next(0, static_cast<std::uint8_t>(i & 1 ? 0x22 : 0x29), 0x00, 0x02, line)) {
+      ++written;
+    }
+  }
+  EXPECT_EQ(written, ts::byte_log_t::max_lines);
+  EXPECT_EQ(line, "ARBS-H 트리거 상태 바이트(패드 0, 20/20): R 0x29 L 0x00 효과 0x02 - 이 연결의 마지막 줄");
+  EXPECT_FALSE(log.next(0, 0x13, 0x13, 0x11, line));  // budget used up
+  log.reset();  // new slot or rebound
+  ASSERT_TRUE(log.next(3, 0x13, 0x13, 0x11, line));
+  EXPECT_EQ(line, "ARBS-H 트리거 상태 바이트(패드 3, 1/20): R 0x13 L 0x13 효과 0x11");
 }

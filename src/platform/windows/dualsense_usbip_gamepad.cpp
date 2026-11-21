@@ -18,6 +18,7 @@
 #include <moonlight-common-c/src/ControllerHaptics.h>
 #include <mutex>
 #include <span>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -30,9 +31,16 @@ namespace platf {
     static_assert(offsetof(lvg::driver::ds5_input_report, right_trigger) == arbs::trigger_status::right_position_offset);
     static_assert(offsetof(lvg::driver::ds5_input_report, reserved2) + 1 == arbs::trigger_status::right_status_offset);
     static_assert(offsetof(lvg::driver::ds5_input_report, reserved2) + 2 == arbs::trigger_status::left_status_offset);
+    // ARBS-H B3b H2b [D-B3b-H]: active-effect byte 48 is reserved2[7].
+    static_assert(offsetof(lvg::driver::ds5_input_report, reserved2) + 7 == arbs::trigger_status::active_effect_offset);
 
     // ARBS-H H2: arbs_trigger_status as last passed by alloc_gamepad (-1 = never set).
+    // B3b: 0 disabled / 1 enabled (H2) / 2 h2b.
     std::atomic<int> trigger_status_setting {-1};
+
+    int bound_trigger_status_setting() {
+      return arbs::trigger_status::normalized_setting(trigger_status_setting.load(std::memory_order_acquire));
+    }
 
     struct usb_slot {
       // Setup/removal may wait for PnP or a transport thread. Other slots and
@@ -80,8 +88,10 @@ namespace platf {
       bool pending_gyro_request = false;
       // ARBS-H H2: fixed for one binding (new slot or rebound). The status
       // trackers are only touched under `mutex`, like the rest of the slot.
-      bool trigger_status = false;
+      // B3b: setting value (0 disabled / 1 enabled / 2 h2b) instead of a bool.
+      int trigger_status = arbs::trigger_status::setting_disabled;
       arbs::trigger_status::state_t trigger_tracker;
+      arbs::trigger_status::byte_log_t trigger_byte_log;  // h2b only [D-B3b-5]
 
       bool publish_latest(gamepad_feedback_msg_t message) {
         const auto type = message.type;
@@ -129,11 +139,20 @@ namespace platf {
           return;
         }
         auto report = lvg::driver::encode_ds5_input(input, &state);
-        if (trigger_status) {
-          // ARBS-H H2 [D-H2-1/2]: bytes 42/43 only; byte 48 stays 0. Off = encoder bytes unchanged.
-          trigger_tracker.apply({reinterpret_cast<std::uint8_t *>(&report), sizeof(report)},
+        if (trigger_status != arbs::trigger_status::setting_disabled) {
+          // ARBS-H H2 [D-H2-1/2]: bytes 42/43; byte 48 stays 0 unless h2b. Off = encoder bytes unchanged.
+          const bool h2b = trigger_status == arbs::trigger_status::setting_h2b;
+          const std::span<std::uint8_t> bytes {reinterpret_cast<std::uint8_t *>(&report), sizeof(report)};
+          trigger_tracker.apply(bytes,
                                 last_output.right_effect.mode, last_output.right_effect.parameters,
-                                last_output.left_effect.mode, last_output.left_effect.parameters);
+                                last_output.left_effect.mode, last_output.left_effect.parameters, h2b);
+          if (h2b) {
+            // [D-B3b-5] one line per change, at most 20 per binding, no addresses.
+            std::string line;
+            if (trigger_byte_log.next(static_cast<int>(global_index), bytes[arbs::trigger_status::right_status_offset], bytes[arbs::trigger_status::left_status_offset], bytes[arbs::trigger_status::active_effect_offset], line)) {
+              BOOST_LOG(info) << line;
+            }
+          }
         }
         std::ignore = controller->set_input_report({reinterpret_cast<const std::uint8_t *>(&report), sizeof(report)});
       }
@@ -156,7 +175,7 @@ namespace platf {
         pending_rumble = pending_rumble || change.rumble;
         pending_rgb = pending_rgb || change.rgb;
         pending_triggers |= change.triggers;
-        if (trigger_status && change.triggers) {
+        if (trigger_status != arbs::trigger_status::setting_disabled && change.triggers) {
           // ARBS-H H2 [D-H2-5]: a new trigger program refreshes the status bytes now
           // instead of at the next client input. submit() flushes output first.
           // Lock order stays slot mutex -> transport input mutex (as in update()).
@@ -389,11 +408,16 @@ namespace platf {
       return false;
     }
 
-    void set_trigger_status(bool enabled) {
-      const int value = enabled ? 1 : 0;
+    void set_trigger_status(int setting) {
+      // B3b: 0 disabled / 1 enabled (H2) / 2 h2b; anything else counts as disabled.
+      const int value = arbs::trigger_status::normalized_setting(setting);
       if (trigger_status_setting.exchange(value, std::memory_order_acq_rel) != value) {
         // First controller and every later change: one line, no addresses.
-        BOOST_LOG(info) << "ARBS-H 트리거 상태 응답: " << (enabled ? "켬" : "끔") << "(arbs_trigger_status)";
+        // "켬"/"끔" are the b3 texts; h2b adds its own word.
+        const char *word = value == arbs::trigger_status::setting_h2b ? "h2b" :
+                           value == arbs::trigger_status::setting_enabled ? "켬" :
+                                                                             "끔";
+        BOOST_LOG(info) << "ARBS-H 트리거 상태 응답: " << word << "(arbs_trigger_status)";
       }
     }
   }  // namespace dualsense_usbip_gamepad
@@ -463,8 +487,9 @@ namespace platf {
           retained->pending_rgb = retained->last_output.has_rgb;
           retained->pending_triggers = retained->last_output.has_trigger_effects ?
                                          DS_EFFECT_LEFT_TRIGGER | DS_EFFECT_RIGHT_TRIGGER : 0;
-          retained->trigger_status = trigger_status_setting.load(std::memory_order_acquire) == 1;
+          retained->trigger_status = bound_trigger_status_setting();
           retained->trigger_tracker.reset();
+          retained->trigger_byte_log.reset();
           retained->submit();
           BOOST_LOG(info) << "Composite DualSense " << id.globalIndex << " rebound to resumed client";
           return 0;
@@ -481,7 +506,7 @@ namespace platf {
     slot->speaker_capable = metadata.speaker_owner && controller_speaker_pcm::capable(metadata.type, metadata.capabilities);
     slot->persist_after_disconnect = metadata.persist_after_disconnect;
     slot->feedback_queue = feedback_queue;
-    slot->trigger_status = trigger_status_setting.load(std::memory_order_acquire) == 1;
+    slot->trigger_status = bound_trigger_status_setting();
     slot->state.reset();
     slot->input.header.size = sizeof(slot->input);
     slot->input.header.version = lvg::k_protocol_version;

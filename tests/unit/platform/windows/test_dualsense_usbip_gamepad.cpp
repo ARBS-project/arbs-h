@@ -926,12 +926,13 @@ TEST_F(DualSenseUsbipGamepadTests, SubmissionIncarnationRejectsSameOwnerRebindAn
 // ARBS-H H2 (provisional): trigger status bytes through the production slot.
 namespace {
   struct trigger_status_setting_guard {
-    explicit trigger_status_setting_guard(bool enabled) {
-      sessions::set_trigger_status(enabled);
+    // B3b: 0 disabled / 1 enabled (H2) / 2 h2b; true/false still mean 1/0.
+    explicit trigger_status_setting_guard(int setting) {
+      sessions::set_trigger_status(setting);
     }
 
     ~trigger_status_setting_guard() {
-      sessions::set_trigger_status(false);
+      sessions::set_trigger_status(0);
     }
   };
 
@@ -948,6 +949,17 @@ namespace {
 
   std::uint8_t report_byte(const lvg::driver::ds5_input_report &report, std::size_t offset) {
     return reinterpret_cast<const std::uint8_t *>(&report)[offset];
+  }
+
+  lvg::driver::ds5_output_report both_trigger_programs(std::uint8_t right_mode, std::array<std::uint8_t, 10> right_parameters, std::uint8_t left_mode, std::array<std::uint8_t, 10> left_parameters) {
+    lvg::driver::ds5_output_report report {};
+    report.report_id = 2;
+    report.valid_flag0 = lvg::driver::k_ds5_flag0_right_trigger_effect | lvg::driver::k_ds5_flag0_left_trigger_effect;
+    report.right_trigger.mode = right_mode;
+    std::memcpy(report.right_trigger.parameters, right_parameters.data(), right_parameters.size());
+    report.left_trigger.mode = left_mode;
+    std::memcpy(report.left_trigger.parameters, left_parameters.data(), left_parameters.size());
+    return report;
   }
 
   std::size_t report_count(fake_transport::endpoint &endpoint) {
@@ -1028,4 +1040,74 @@ TEST_F(DualSenseUsbipGamepadTests, ArbsTriggerStatusFollowsTheSettingAtRebind) {
   backend.update(0, {0, 0, 60, 0, 0, 0, 0});
   EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x12);  // latch reset at rebind
   backend.free(0, false);
+}
+
+// ARBS-H B3b H2b (provisional [D-B3b-H]): h2b = the H2 bytes 42/43 plus byte 48.
+TEST_F(DualSenseUsbipGamepadTests, ArbsTriggerStatusH2bAddsActiveEffectByte) {
+  trigger_status_setting_guard setting {2};
+  platf::usbip_gamepad_t backend;
+  auto feedback = queue();
+  ASSERT_EQ(backend.alloc({2, 0}, arrival(), feedback), 0);
+  auto endpoint = fake_transport::current[2];
+  const auto before = report_count(*endpoint);
+  endpoint->hid(right_trigger_program(0x25, weapon_zones_2_3));
+  EXPECT_EQ(report_count(*endpoint), before + 1);  // same refresh as enabled
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x00);
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 48), 0x02);  // right Weapon, low nibble
+
+  backend.update(2, {0, 0, 255, 0, 0, 0, 0});
+  auto report = endpoint->latest_input();
+  EXPECT_EQ(report_byte(report, 42), 0x29);  // identical to enabled
+  EXPECT_EQ(report_byte(report, 43), 0x00);
+  EXPECT_EQ(report_byte(report, 48), 0x02);
+  for (const std::size_t i : {41u, 44u, 45u, 46u, 47u, 49u, 50u, 51u, 52u}) {
+    EXPECT_EQ(report_byte(report, i), 0x00) << i;
+  }
+
+  // Left Feedback (zones 3..9) + right Vibration (frequency set) -> 0x13.
+  constexpr std::array<std::uint8_t, 10> zones_3_9 {0xF8, 0x03};
+  constexpr std::array<std::uint8_t, 10> vibration_3_9 {0xF8, 0x03, 0, 0, 0, 0, 0, 0, 30};
+  endpoint->hid(both_trigger_programs(0x26, vibration_3_9, 0x21, zones_3_9));
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 48), 0x13);
+
+  endpoint->hid(both_trigger_programs(0x05, {}, 0x05, {}));
+  report = endpoint->latest_input();
+  EXPECT_EQ(report_byte(report, 42), 0x00);
+  EXPECT_EQ(report_byte(report, 43), 0x00);
+  EXPECT_EQ(report_byte(report, 48), 0x00);
+  backend.free(2, false);
+}
+
+TEST_F(DualSenseUsbipGamepadTests, ArbsTriggerStatusEnabledStillLeavesByte48Zero) {
+  trigger_status_setting_guard setting {1};
+  platf::usbip_gamepad_t backend;
+  auto feedback = queue();
+  ASSERT_EQ(backend.alloc({2, 0}, arrival(), feedback), 0);
+  auto endpoint = fake_transport::current[2];
+  endpoint->hid(both_trigger_programs(0x25, weapon_zones_2_3, 0x25, weapon_zones_2_3));
+  backend.update(2, {0, 255, 255, 0, 0, 0, 0});
+  const auto report = endpoint->latest_input();
+  EXPECT_EQ(report_byte(report, 42), 0x29);
+  EXPECT_EQ(report_byte(report, 43), 0x29);
+  EXPECT_EQ(report_byte(report, 48), 0x00);  // b3 behaviour
+  backend.free(2, false);
+}
+
+TEST_F(DualSenseUsbipGamepadTests, ArbsTriggerStatusUnknownSettingValuesMeanDisabled) {
+  for (const int value : {-1, 3, 42}) {
+    trigger_status_setting_guard setting {value};
+    platf::usbip_gamepad_t backend;
+    auto feedback = queue();
+    ASSERT_EQ(backend.alloc({2, 0}, arrival(), feedback), 0);
+    auto endpoint = fake_transport::current[2];
+    const auto before = report_count(*endpoint);
+    endpoint->hid(right_trigger_program(0x25, weapon_zones_2_3));
+    EXPECT_EQ(report_count(*endpoint), before) << value;
+    backend.update(2, {0, 255, 255, 0, 0, 0, 0});
+    const auto report = endpoint->latest_input();
+    for (std::size_t i = 41; i <= 52; ++i) {
+      EXPECT_EQ(report_byte(report, i), 0x00) << value << " byte " << i;
+    }
+    backend.free(2, false);
+  }
 }
