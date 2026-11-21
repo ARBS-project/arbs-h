@@ -922,3 +922,110 @@ TEST_F(DualSenseUsbipGamepadTests, SubmissionIncarnationRejectsSameOwnerRebindAn
     backend.free(0, false);
   }
 }
+
+// ARBS-H H2 (provisional): trigger status bytes through the production slot.
+namespace {
+  struct trigger_status_setting_guard {
+    explicit trigger_status_setting_guard(bool enabled) {
+      sessions::set_trigger_status(enabled);
+    }
+
+    ~trigger_status_setting_guard() {
+      sessions::set_trigger_status(false);
+    }
+  };
+
+  lvg::driver::ds5_output_report right_trigger_program(std::uint8_t mode, std::array<std::uint8_t, 10> parameters) {
+    lvg::driver::ds5_output_report report {};
+    report.report_id = 2;
+    report.valid_flag0 = lvg::driver::k_ds5_flag0_right_trigger_effect;
+    report.right_trigger.mode = mode;
+    std::memcpy(report.right_trigger.parameters, parameters.data(), parameters.size());
+    return report;
+  }
+
+  constexpr std::array<std::uint8_t, 10> weapon_zones_2_3 {0x0C, 0x00, 0x07};
+
+  std::uint8_t report_byte(const lvg::driver::ds5_input_report &report, std::size_t offset) {
+    return reinterpret_cast<const std::uint8_t *>(&report)[offset];
+  }
+
+  std::size_t report_count(fake_transport::endpoint &endpoint) {
+    std::lock_guard lock {endpoint.mutex};
+    return endpoint.reports.size();
+  }
+}  // namespace
+
+TEST_F(DualSenseUsbipGamepadTests, ArbsTriggerStatusOnFillsRightStatusFromProgramAndPosition) {
+  trigger_status_setting_guard setting {true};
+  platf::usbip_gamepad_t backend;
+  auto feedback = queue();
+  ASSERT_EQ(backend.alloc({2, 0}, arrival(), feedback), 0);
+  auto endpoint = fake_transport::current[2];
+  const auto before = report_count(*endpoint);
+  endpoint->hid(right_trigger_program(0x25, weapon_zones_2_3));
+  // [D-H2-5] a new program refreshes the input report without waiting for input.
+  EXPECT_EQ(report_count(*endpoint), before + 1);
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x00);
+
+  backend.update(2, {0, 0, 255, 0, 0, 0, 0});
+  auto report = endpoint->latest_input();
+  EXPECT_EQ(report.right_trigger, 255);
+  EXPECT_EQ(report_byte(report, 42), 0x29);
+  EXPECT_EQ(report_byte(report, 43), 0x00);
+  EXPECT_EQ(report_byte(report, 48), 0x00);
+  backend.update(2, {0, 0, 60, 0, 0, 0, 0});
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x22);
+
+  endpoint->hid(right_trigger_program(0x05, {}));
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x00);
+  backend.free(2, false);
+}
+
+TEST_F(DualSenseUsbipGamepadTests, ArbsTriggerStatusOffKeepsReportsAsBefore) {
+  trigger_status_setting_guard setting {false};
+  platf::usbip_gamepad_t backend;
+  auto feedback = queue();
+  ASSERT_EQ(backend.alloc({2, 0}, arrival(), feedback), 0);
+  auto endpoint = fake_transport::current[2];
+  const auto before = report_count(*endpoint);
+  endpoint->hid(right_trigger_program(0x25, weapon_zones_2_3));
+  EXPECT_EQ(report_count(*endpoint), before);  // no extra report when off
+  backend.update(2, {0, 255, 255, 0, 0, 0, 0});
+  const auto report = endpoint->latest_input();
+  for (std::size_t i = 41; i <= 52; ++i) {
+    EXPECT_EQ(report_byte(report, i), 0x00) << i;
+  }
+  backend.free(2, false);
+}
+
+TEST_F(DualSenseUsbipGamepadTests, ArbsTriggerStatusFollowsTheSettingAtRebind) {
+  auto scope = sessions::start_session();
+  sessions::set_application_active(true);
+  trigger_status_setting_guard setting {true};
+  platf::usbip_gamepad_t backend;
+  auto persistent_arrival = arrival();
+  persistent_arrival.persist_after_disconnect = true;
+  auto feedback = queue();
+  ASSERT_EQ(backend.alloc({0, 0}, persistent_arrival, feedback), 0);
+  auto endpoint = fake_transport::current[0];
+  endpoint->hid(right_trigger_program(0x25, weapon_zones_2_3));
+  backend.update(0, {0, 0, 255, 0, 0, 0, 0});
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x29);
+  backend.free(0);
+  ASSERT_EQ(fake_transport::current[0], endpoint);
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x00);  // released input
+
+  sessions::set_trigger_status(false);
+  ASSERT_EQ(backend.alloc({0, 0}, persistent_arrival, feedback), 0);
+  ASSERT_EQ(fake_transport::current[0], endpoint);  // rebound, not recreated
+  backend.update(0, {0, 0, 255, 0, 0, 0, 0});
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x00);
+
+  backend.free(0);
+  sessions::set_trigger_status(true);
+  ASSERT_EQ(backend.alloc({0, 0}, persistent_arrival, feedback), 0);
+  backend.update(0, {0, 0, 60, 0, 0, 0, 0});
+  EXPECT_EQ(report_byte(endpoint->latest_input(), 42), 0x12);  // latch reset at rebind
+  backend.free(0, false);
+}

@@ -2142,6 +2142,11 @@ sunshine_register_component(NAME test_component_dualsense_usbip_gamepad TEST_SOU
 if(TARGET test_component_dualsense_usbip_gamepad)
     set_tests_properties(test_component_dualsense_usbip_gamepad PROPERTIES TIMEOUT 30)
 endif()
+# ARBS-H H2: header-only trigger status bytes, checked against the real Sony input encoder.
+sunshine_register_component(NAME test_component_arbs_trigger_status TEST_SOURCE unit/test_arbs_trigger_status.cpp
+    PRODUCT_SOURCES "${SUNSHINE_TEST_REPOSITORY_ROOT}/third-party/libvirtualgamepad/driver/src/dualsense.cpp"
+    INCLUDE_DIRECTORIES ${_dualsense_protocol_test_adapter}
+        "${SUNSHINE_TEST_REPOSITORY_ROOT}/third-party/libvirtualgamepad/include")
 unset(_dualsense_protocol_test_adapter)
 sunshine_add_test_target(NAME test_component_dualsense_usbip_protocol CATEGORY component
     TEST_SOURCES "${CMAKE_CURRENT_LIST_DIR}/unit/platform/windows/test_dualsense_usbip_protocol.cpp"

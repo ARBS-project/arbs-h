@@ -27,6 +27,10 @@ namespace platf::dualsense_usbip_gamepad {
   // A USB/IP import alone is insufficient: both this controller's HID child
   // and its active four-channel Windows audio endpoint must be ready.
   bool has_ready_controller();
+  // ARBS-H H2 (provisional, default off): fill the input report's adaptive
+  // trigger status bytes. The caller passes config::input.arbs_trigger_status
+  // before each alloc(); a controller keeps the value it was bound with.
+  void set_trigger_status(bool enabled);
 }  // namespace platf::dualsense_usbip_gamepad
 
 namespace platf {

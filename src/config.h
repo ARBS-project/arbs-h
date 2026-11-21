@@ -361,6 +361,9 @@ namespace config {
 
     bool enable_input_only_mode;
     bool forward_rumble;
+    // ARBS-H H2 (provisional): fill the composite DualSense input report's
+    // adaptive trigger status bytes from the game's trigger program. Default off.
+    bool arbs_trigger_status;
   };
 
   struct frame_limiter_t {

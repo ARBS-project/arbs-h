@@ -946,6 +946,36 @@ Requires a client and controller with waveform haptics support.
 dualsense_haptics_gain = 1.5
 ```
 
+### arbs_trigger_status
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            ARBS-H (Windows, composite DualSense with USB audio only). Experimental, provisional.
+            When enabled, the virtual DualSense input report carries adaptive trigger status bytes
+            (byte 42 right, byte 43 left, report ID counted as byte 0) computed from the last trigger
+            program the game sent and the trigger position the client sent:
+            Feedback reports load applied, Weapon reports ready / firing / fired, Vibration reports vibrating.
+            Some games wait for these bytes before treating an adaptive-trigger press as a shot.
+            Other trigger programs report 0, and the active-effect byte (48) is not written.
+            When disabled, the bytes stay 0 as in the original build. A controller keeps the value it
+            was connected with; restart the host or reconnect the controller after changing it.
+            The log shows <code>ARBS-H 트리거 상태 응답:</code> when the first controller connects and after each change.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}disabled@endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            arbs_trigger_status = enabled
+            @endcode</td>
+    </tr>
+</table>
+
 ### proton_dualsense_compatibility
 
 <table>

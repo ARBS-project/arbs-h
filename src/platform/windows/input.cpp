@@ -1495,6 +1495,8 @@ namespace platf {
           vhf_desired_profile(metadata),
           dualsense_usbip_gamepad::enabled(),
           raw->usbip != nullptr && raw->usbip->available())) {
+      // ARBS-H H2: the slot code does not read config; pass the setting before binding.
+      dualsense_usbip_gamepad::set_trigger_status(config::input.arbs_trigger_status);
       if (raw->usbip && raw->usbip->alloc(id, metadata, feedback_queue) == 0) {
         raw->gamepad_backend[id.globalIndex] = gamepad_backend_e::usbip;
         return 0;
