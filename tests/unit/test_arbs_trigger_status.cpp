@@ -303,6 +303,69 @@ TEST(ArbsTriggerStatus, H2b_SettingParse) {
   EXPECT_EQ(ts::normalized_setting(3), 0);
 }
 
+// ---- ARBS-H B4 (provisional [D-B4-1], docs/analysis/B4.md section 2): default h2b ----
+
+static_assert(ts::setting_default == ts::setting_h2b);
+static_assert(ts::normalized_setting(ts::setting_default) == ts::setting_h2b);
+
+namespace {
+  // Mirror of the config.cpp path for this key (config.cpp is not linked into this test):
+  // the input_t default is ts::setting_default (config.cpp:1066); int_f keeps it when the
+  // key is missing or the value is empty (config.cpp int_f), otherwise it stores
+  // setting_from(value, to_bool(value)) (config.cpp:2301-2303). The bool here follows
+  // config.cpp to_bool for the values used below.
+  int parsed_like_config(const std::string *line_value) {
+    int stored = ts::setting_default;
+    if (line_value != nullptr && !line_value->empty()) {
+      const bool legacy = *line_value == "enabled" || *line_value == "true" || *line_value == "1";
+      stored = ts::setting_from(*line_value, legacy);
+    }
+    return ts::normalized_setting(stored);
+  }
+}  // namespace
+
+TEST(ArbsTriggerStatus, B4_DefaultIsH2b) {
+  EXPECT_EQ(ts::setting_default, 2);
+  const std::string empty;
+  const std::string disabled = "disabled";
+  const std::string enabled = "enabled";
+  const std::string h2b = "h2b";
+  const std::string zero = "0";
+  EXPECT_EQ(parsed_like_config(nullptr), ts::setting_h2b);  // no line in the config file
+  EXPECT_EQ(parsed_like_config(&empty), ts::setting_h2b);  // `arbs_trigger_status =`
+  EXPECT_EQ(parsed_like_config(&h2b), ts::setting_h2b);
+  EXPECT_EQ(parsed_like_config(&enabled), ts::setting_enabled);
+  EXPECT_EQ(parsed_like_config(&disabled), ts::setting_disabled);  // rollback value kept
+  EXPECT_EQ(parsed_like_config(&zero), ts::setting_disabled);
+}
+
+TEST(ArbsTriggerStatus, B4_DefaultWritesH2bBytesAndDisabledLeavesEncoderBytes) {
+  // Default (h2b): the slot calls apply(..., true) -> 42/43 and 48 are written.
+  auto with_default = encoded(77, 255);
+  const auto original = with_default;
+  ts::state_t state;
+  const bool active_effect = ts::normalized_setting(ts::setting_default) == ts::setting_h2b;
+  ASSERT_TRUE(active_effect);
+  state.apply(bytes(with_default), ts::mode_weapon, weapon_2_3, ts::mode_feedback, zones_3_9, active_effect);
+  EXPECT_EQ(bytes(with_default)[42], 0x29);
+  EXPECT_EQ(bytes(with_default)[43], 0x13);
+  EXPECT_EQ(bytes(with_default)[48], 0x12);
+
+  // disabled: the slot does not call apply(), so the report equals the encoder output
+  // byte for byte (same rule as T11; the encoder bytes 41..52 are 0).
+  const std::string disabled = "disabled";
+  ASSERT_EQ(parsed_like_config(&disabled), ts::setting_disabled);
+  auto with_disabled = encoded(77, 255);
+  const auto *o = reinterpret_cast<const std::uint8_t *>(&original);
+  const auto d = bytes(with_disabled);
+  for (std::size_t i = 0; i < sizeof(with_disabled); ++i) {
+    EXPECT_EQ(d[i], o[i]) << i;
+  }
+  for (std::size_t i = 41; i <= 52; ++i) {
+    EXPECT_EQ(d[i], 0x00) << i;
+  }
+}
+
 TEST(ArbsTriggerStatus, H2b_DiagnosticLineOnChangeAtMostTwentyPerBinding) {
   ts::byte_log_t log;
   std::string line;

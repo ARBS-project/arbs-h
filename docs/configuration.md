@@ -953,36 +953,39 @@ dualsense_haptics_gain = 1.5
         <td>Description</td>
         <td colspan="2">
             ARBS-H (Windows, composite DualSense with USB audio only). Experimental, provisional.
-            When enabled, the virtual DualSense input report carries adaptive trigger status bytes
+            The virtual DualSense input report carries adaptive trigger status bytes
             (byte 42 right, byte 43 left, report ID counted as byte 0) computed from the last trigger
             program the game sent and the trigger position the client sent:
             Feedback reports load applied, Weapon reports ready / firing / fired, Vibration reports vibrating.
             Some games wait for these bytes before treating an adaptive-trigger press as a shot.
-            Other trigger programs report 0, and the active-effect byte (48) is not written.
-            When disabled, the bytes stay 0 as in the original build. A controller keeps the value it
-            was connected with; restart the host or reconnect the controller after changing it.
-            The log shows <code>ARBS-H 트리거 상태 응답:</code> when the first controller connects and after each change.
-            The value <code>h2b</code> (ARBS-H B3b, provisional, one trial) writes the same bytes 42/43 as
-            <code>enabled</code> and also byte 48, the active-effect byte: right trigger in the low nibble,
-            left trigger in the high nibble, 1 = Feedback, 2 = Weapon, 3 = Vibration, 0 for any other effect.
+            Other trigger programs report 0.
+            Since ARBS-H B4 the default is <code>h2b</code>: the same bytes 42/43 plus byte 48, the
+            active-effect byte (right trigger in the low nibble, left trigger in the high nibble,
+            1 = Feedback, 2 = Weapon, 3 = Vibration, 0 for any other effect). A config file without this
+            line, or with an empty value, uses <code>h2b</code>.
             With <code>h2b</code> the log shows up to 20 lines per controller connection starting with
             <code>ARBS-H 트리거 상태 바이트</code> whenever these bytes change.
+            <code>enabled</code> writes bytes 42/43 only (byte 48 is not written).
+            To roll back, set <code>disabled</code>: the bytes stay 0 as in the original build.
+            A controller keeps the value it was connected with; restart the host or reconnect the
+            controller after changing it.
+            The log shows <code>ARBS-H 트리거 상태 응답:</code> when the first controller connects and after each change.
         </td>
     </tr>
     <tr>
         <td>Default</td>
-        <td colspan="2">@code{}disabled@endcode</td>
+        <td colspan="2">@code{}h2b@endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            arbs_trigger_status = enabled
+            arbs_trigger_status = disabled
             @endcode</td>
     </tr>
     <tr>
         <td rowspan="3">Choices</td>
         <td>disabled</td>
-        <td>Encoder bytes unchanged (original behavior).</td>
+        <td>Encoder bytes unchanged (original behavior, rollback value).</td>
     </tr>
     <tr>
         <td>enabled</td>
@@ -990,7 +993,7 @@ dualsense_haptics_gain = 1.5
     </tr>
     <tr>
         <td>h2b</td>
-        <td>Status bytes 42/43 plus active-effect byte 48.</td>
+        <td>Status bytes 42/43 plus active-effect byte 48 (default).</td>
     </tr>
 </table>
 

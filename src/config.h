@@ -362,9 +362,10 @@ namespace config {
     bool enable_input_only_mode;
     bool forward_rumble;
     // ARBS-H H2 (provisional): fill the composite DualSense input report's
-    // adaptive trigger status bytes from the game's trigger program. Default off.
+    // adaptive trigger status bytes from the game's trigger program.
     // ARBS-H B3b [D-B3b-H, provisional]: 0 = disabled, 1 = enabled (H2, bytes 42/43),
     // 2 = h2b (H2 + byte 48 active-effect nibbles). See src/arbs_trigger_status.h.
+    // ARBS-H B4 [D-B4-1, provisional]: default h2b (setting_default); `disabled` rolls back.
     int arbs_trigger_status;
   };
 

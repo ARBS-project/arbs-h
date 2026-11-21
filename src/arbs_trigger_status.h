@@ -5,10 +5,13 @@
  *
  * A real DualSense reports, per trigger, how the active adaptive-trigger program is
  * reacting (e.g. Weapon ready / firing / fired). The shared Sony encoder leaves these
- * bytes zero. When the host setting `arbs_trigger_status` is enabled, the USB/IP slot
- * fills them from the last trigger program the game sent and the trigger position the
- * client sent. With the setting disabled nothing here is called and the report is
+ * bytes zero. When the host setting `arbs_trigger_status` is `enabled` or `h2b`, the USB/IP
+ * slot fills them from the last trigger program the game sent and the trigger position the
+ * client sent. With the setting `disabled` nothing here is called and the report is
  * byte-for-byte the encoder's output.
+ * ARBS-H B4 [D-B4-1, provisional] (user decision, EA-B3b-R-03): the default is `h2b`
+ * (setting_default). A config file without the line, or with an empty value, runs H2b;
+ * `arbs_trigger_status = disabled` restores the original zero bytes.
  *
  * PROVISIONAL decisions (docs/analysis/B3.md section 2, not yet judged by the planner):
  *   [D-H2-1] Only the status bytes 42 (right) and 43 (left) are written, counting the
@@ -22,8 +25,8 @@
  *            0xFC, unknown) and every invalid program -> 0x00 and the Weapon latch clears.
  *
  * ARBS-H B3b H2b (PROVISIONAL [D-B3b-H] / [D-B3b-5], docs/analysis/B3b.md section 4):
- *   Setting values: `disabled` (default, 0) / `enabled` (1, H2 = bytes 42/43 only, same
- *   bytes as b3) / `h2b` (2, H2 plus byte 48). Byte 48 (reserved2[7]) = active effect
+ *   Setting values: `disabled` (0, b3b default) / `enabled` (1, H2 = bytes 42/43 only, same
+ *   bytes as b3) / `h2b` (2, H2 plus byte 48; default since B4). Byte 48 (reserved2[7]) = active effect
  *   nibbles: right trigger low nibble, left trigger high nibble, 1 = Feedback, 2 = Weapon,
  *   3 = Vibration, 0 = reset / any other effect (S1 fandom revid 602 for position and
  *   values, S8 daidr for position only). A nibble is non-zero only for a program that is
@@ -70,9 +73,12 @@ namespace arbs::trigger_status {
   inline constexpr std::uint8_t effect_vibration = 3;
 
   /// `arbs_trigger_status` values as stored in config::input.arbs_trigger_status.
-  inline constexpr int setting_disabled = 0;  ///< default: encoder bytes unchanged
+  inline constexpr int setting_disabled = 0;  ///< encoder bytes unchanged (rollback value)
   inline constexpr int setting_enabled = 1;  ///< H2: bytes 42/43 (as b3)
   inline constexpr int setting_h2b = 2;  ///< H2b: bytes 42/43 + 48 [D-B3b-H]
+  /// Value when the config has no `arbs_trigger_status` line or an empty one (config.cpp
+  /// input_t default). ARBS-H B4 [D-B4-1]: h2b.
+  inline constexpr int setting_default = setting_h2b;
 
   /// Parses the config value. `h2b` (any letter case) selects H2b; every other value keeps
   /// the b3 boolean meaning, passed in as `legacy_enabled` (config.cpp to_bool), so old

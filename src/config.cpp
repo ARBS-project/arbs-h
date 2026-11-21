@@ -1063,7 +1063,7 @@ namespace config {
     true,  // native pen/touch support
     false,  // enable input only mode
     true,  // forward_rumble
-    0,  // arbs_trigger_status (ARBS-H H2/H2b: DualSense trigger status bytes, 0 = disabled, default)
+    arbs::trigger_status::setting_default,  // arbs_trigger_status (ARBS-H H2/H2b: DualSense trigger status bytes; default h2b since B4 [D-B4-1], EA-B3b-R-03; `disabled` = 0 rolls back)
   };
 
   frame_limiter_t frame_limiter {
