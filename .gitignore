@@ -77,3 +77,20 @@ AGENTS.md
 test_sunshine.log
 vibeshine_state.json
 .claude/
+
+# ARBS (R0): build outputs, logs, signing material and secrets
+*.log
+*.zip
+*.zip.sha256
+*.jks
+*.keystore
+keystore.properties
+*.p12
+*.pfx
+*.pem
+*.key
+.env
+local.properties
+build*.out
+evidence/
+out/
