@@ -207,7 +207,9 @@ begin
 
   ApolloStart := PlanValue('apollo_start');
   ApolloState := PlanValue('apollo_state');
-  if (not IsUpgrade) and (PlanValue('apollo_installed') = '1') and
+  // Offered on upgrades too, but only while Vibepollo would take the ports (e.g. after the rollback tool);
+  // otherwise ARBS-H could only be left on manual start. The original value is recorded only if no record exists.
+  if (PlanValue('apollo_installed') = '1') and
      not (((ApolloStart = 'demand') or (ApolloStart = 'disabled')) and (ApolloState = 'STOPPED')) then
     IdxStop := OptPage.Add('Vibepollo 서비스(ApolloService) 멈춤 + 시작 유형 "수동" (지금: ' + ApolloStart + ' / ' + ApolloState +
       ') - 원래 값은 기록되고 "ARBS-H 되돌리기"로 복원');
