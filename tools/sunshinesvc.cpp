@@ -11,6 +11,7 @@
 #include <sddl.h>
 #include <shlobj.h>
 
+#include "src/platform/windows/arbs_h_names.h"
 #include "src/platform/windows/service_constants.h"
 
 // PROC_THREAD_ATTRIBUTE_JOB_LIST is currently missing from MinGW headers
@@ -23,7 +24,7 @@ SERVICE_STATUS service_status;
 HANDLE stop_event;
 HANDLE session_change_event;
 
-constexpr auto SERVICE_NAME = "ApolloService";
+constexpr auto SERVICE_NAME = ARBS_H_SERVICE_NAME_A;  // ARBS-H R1a (D-R1a-2)
 constexpr DWORD FAST_EXIT_WINDOW_MS = 60 * 1000;
 constexpr DWORD CRASH_LOOP_RESTART_DELAY_MS = 30 * 1000;
 constexpr DWORD CRASH_LOOP_FAST_EXIT_THRESHOLD = 3;
@@ -262,7 +263,7 @@ HANDLE OpenLogFileHandle() {
     return open_null();
   }
   program_data.resize(wcslen(program_data.c_str()));
-  const std::wstring service_root = program_data + L"\\Vibepollo";
+  const std::wstring service_root = program_data + L"\\" ARBS_H_PROGRAMDATA_DIR_W;  // ARBS-H R1a (D-R1a-3)
   const std::wstring log_directory = service_root + L"\\Logs";
   if (!SecureServiceDirectory(service_root) || !SecureServiceDirectory(log_directory)) {
     // Never traverse an untrusted or reparse-backed directory merely to retain

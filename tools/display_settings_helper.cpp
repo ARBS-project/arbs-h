@@ -60,6 +60,7 @@
     #define SECURITY_WIN32
   #endif
 
+  #include "src/platform/windows/arbs_h_names.h"
   #include "src/platform/windows/display_restore_task.h"
   #include "src/platform/windows/display_restore_policy.h"
   #include "tools/display_helper_paths.h"
@@ -128,7 +129,7 @@ namespace {
   }
 
   std::wstring build_restore_task_name(const std::wstring &username) {
-    return L"VibepolloDisplayRestore";
+    return ARBS_H_DISPLAY_RESTORE_TASK_W;  // ARBS-H R1a (D-R1a-3)
   }
 
   // Trigger a more robust Explorer/shell refresh so that desktop/taskbar icons
@@ -5211,7 +5212,7 @@ namespace {
   }
 
   bool create_restore_scheduled_task() {
-    BOOST_LOG(info) << "Attempting to create scheduled task 'VibepolloDisplayRestore'...";
+    BOOST_LOG(info) << "Attempting to create scheduled task '" ARBS_H_DISPLAY_RESTORE_TASK_A "'...";
 
     const DWORD active_session_id = WTSGetActiveConsoleSessionId();
 
@@ -5246,7 +5247,7 @@ namespace {
       return false;
     }
 
-    const auto existing_state = display_helper::read_restore_task_state(root_folder, L"VibepolloDisplayRestore");
+    const auto existing_state = display_helper::read_restore_task_state(root_folder, ARBS_H_DISPLAY_RESTORE_TASK_W);
     if (!display_helper::can_manage_restore_task(existing_state)) {
       BOOST_LOG(info) << "Preserving restore task state: " << display_helper::restore_task_state_name(existing_state);
       root_folder->Release();
@@ -5365,7 +5366,7 @@ namespace {
     hr = trigger->QueryInterface(IID_ILogonTrigger, (void **) &logon_trigger);
     trigger->Release();
     if (SUCCEEDED(hr)) {
-      logon_trigger->put_Id(_bstr_t(L"VibepolloDisplayHelperLogonTrigger"));
+      logon_trigger->put_Id(_bstr_t(ARBS_H_DISPLAY_RESTORE_TRIGGER_W));
       logon_trigger->put_Enabled(VARIANT_TRUE);
       if (has_username) {
         logon_trigger->put_UserId(_bstr_t(username.c_str()));

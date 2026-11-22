@@ -39,7 +39,9 @@ SC_HANDLE OpenSCManagerW(LPCWSTR machine, LPCWSTR database, DWORD access) {
 
 SC_HANDLE OpenServiceW(SC_HANDLE manager, LPCWSTR name, DWORD access) {
   EXPECT_EQ(manager, reinterpret_cast<SC_HANDLE>(1));
-  EXPECT_EQ(std::wcscmp(name, L"ApolloService"), 0);
+  // ARBS-H R1a (D-R1a-2): the startup toggle only ever opens the ARBS-H service, never Vibepollo's.
+  EXPECT_EQ(std::wcscmp(name, L"ARBSHService"), 0);
+  EXPECT_NE(std::wcscmp(name, L"ApolloService"), 0);
   // Query/change configuration rights only; no start, stop, ACL, or delete rights.
   EXPECT_EQ(access & ~(SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG), 0u);
   if (missing || (denied && (access & SERVICE_CHANGE_CONFIG))) {

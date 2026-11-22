@@ -27,6 +27,10 @@ extern "C" {
 #endif
 }
 
+#ifdef _WIN32
+  #include "platform/windows/arbs_h_names.h"
+#endif
+
 using namespace std::literals;
 
 void launch_ui(const std::optional<std::string> &path) {
@@ -154,7 +158,7 @@ namespace service_ctrl {
         return;
       }
 
-      service_handle = OpenServiceA(scm_handle, "ApolloService", service_desired_access);
+      service_handle = OpenServiceA(scm_handle, ARBS_H_SERVICE_NAME_A, service_desired_access);  // ARBS-H R1a: never ApolloService
       if (!service_handle) {
         auto winerr = GetLastError();
         BOOST_LOG(error) << "OpenService() failed: "sv << winerr;

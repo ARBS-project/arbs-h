@@ -12,6 +12,7 @@ import {
   dismissUpdate,
   prereleasesEnabled,
 } from '@/utils/updates';
+import { RELEASES_PAGE, isReleasePageUrl } from '@/utils/repo';
 
 const system = useSystemStore();
 const { t } = useI18n();
@@ -90,11 +91,7 @@ function dismiss(): void {
       :title="t('ui.updates.available', { version: available.tag })"
     >
       <a
-        :href="
-          available.url?.startsWith('https://github.com/Nonary/Vibepollo/releases/')
-            ? available.url
-            : 'https://github.com/Nonary/Vibepollo/releases'
-        "
+        :href="isReleasePageUrl(available.url) ? available.url : RELEASES_PAGE"
         target="_blank"
         rel="noopener noreferrer"
         >{{ t('ui.maintenance.releases.open') }}</a

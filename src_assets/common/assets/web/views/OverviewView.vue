@@ -19,6 +19,12 @@ import type { SessionStatus } from '@/types/sessions';
 import { useSystemStore } from '@/stores/system';
 import { formatBytes } from '@/utils/format';
 import { displayRecoverySupported } from '@/utils/displayRecovery';
+import {
+  ARBS_UPSTREAM_BASE,
+  ISSUES_NEW_PAGE,
+  PRODUCT_NAME,
+  RELEASES_LATEST_PAGE,
+} from '@/utils/repo';
 
 interface OverviewWarning {
   key: string;
@@ -527,15 +533,16 @@ onBeforeUnmount(() => {
           >{{ t('ui.overview.installedVersion') }}
           <strong>{{ system.metadata?.version || t('_common.unknown') }}</strong></span
         >
+        <span class="overview-footer__base">{{ PRODUCT_NAME }} · {{ ARBS_UPSTREAM_BASE }}</span>
         <nav :aria-label="t('ui.overview.support')">
           <a
-            href="https://github.com/Nonary/Vibepollo/issues/new/choose"
+            :href="ISSUES_NEW_PAGE"
             target="_blank"
             rel="noopener noreferrer"
             >{{ t('ui.overview.actions.reportBug') }}<UiIcon name="external-link" :size="14"
           /></a>
           <a
-            href="https://github.com/Nonary/Vibepollo/releases/latest"
+            :href="RELEASES_LATEST_PAGE"
             target="_blank"
             rel="noopener noreferrer"
             >{{ t('ui.overview.actions.checkUpdates') }}<UiIcon name="external-link" :size="14"

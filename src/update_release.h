@@ -33,6 +33,10 @@ namespace release_selection {
     }
     return false;
   }
+  /// ARBS-H R1a: Windows installer asset name for a release version (tag without a leading 'v').
+  inline std::string windows_setup_asset(const std::string &version) {
+    return "arbs-h-" + version + "-setup.exe";
+  }
   inline bool macos_package(const json &release, bool arm64) {
     return asset(release, arm64 ? "Vibepollo-macOS-arm64.dmg" : "Vibepollo-macOS-x86_64.dmg");
   }
@@ -43,8 +47,9 @@ namespace release_selection {
 #ifdef _WIN32
     auto version = release["tag_name"].get<std::string>();
     if (version.starts_with('v')) version.erase(0, 1);
-    const bool package = asset(release, "VibepolloSetup.exe") || (!nightly &&
-      (asset(release, "VibepolloSetup-v" + version + ".exe") || asset(release, "VibepolloSetup-" + version + ".exe")));
+    // ARBS-H R1a (D-R1a-11): only the ARBS-H installer asset of this exact version qualifies;
+    // Vibepollo installers (VibepolloSetup*.exe) never do. Daily/nightly rules below are unchanged.
+    const bool package = asset(release, windows_setup_asset(version));
 #elif defined(__APPLE__)
 #if defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
     const bool package = macos_package(release, true);

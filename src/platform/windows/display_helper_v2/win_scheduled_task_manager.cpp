@@ -2,6 +2,7 @@
 #include "src/platform/windows/display_helper_v2/win_scheduled_task_manager.h"
 
 #include "src/logging.h"
+#include "src/platform/windows/arbs_h_names.h"
 
 #ifndef SECURITY_WIN32
   #define SECURITY_WIN32
@@ -261,7 +262,7 @@ namespace display_helper::v2 {
   }
 
   std::wstring WinScheduledTaskManager::build_restore_task_name(const std::wstring &) {
-    return L"VibepolloDisplayRestore";
+    return ARBS_H_DISPLAY_RESTORE_TASK_W;  // ARBS-H R1a (D-R1a-3)
   }
 
   bool WinScheduledTaskManager::create_restore_task(const std::wstring &username) {
@@ -356,7 +357,7 @@ namespace display_helper::v2 {
     }
 
     if (ILogonTrigger *logon_trigger = nullptr; SUCCEEDED(trigger->QueryInterface(IID_ILogonTrigger, (void **) &logon_trigger))) {
-      logon_trigger->put_Id(_bstr_t(L"VibepolloDisplayHelperLogonTrigger"));
+      logon_trigger->put_Id(_bstr_t(ARBS_H_DISPLAY_RESTORE_TRIGGER_W));
       logon_trigger->put_Enabled(VARIANT_TRUE);
       if (has_user_sid) {
         logon_trigger->put_UserId(_bstr_t(user_sid.c_str()));

@@ -157,7 +157,7 @@
                     strong
                     size="small"
                     class="w-full justify-center sm:w-auto"
-                    href="https://github.com/Nonary/Vibepollo/issues/new?template=bug_report.yml"
+                    :href="ISSUES_NEW_PAGE"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
@@ -558,6 +558,7 @@ import {
   dismissUpdate,
   type UpdateRelease,
 } from '../../web/utils/updates';
+import { ISSUES_NEW_PAGE, RELEASES_PAGE, isReleasePageUrl } from '../../web/utils/repo';
 import { useConfigStore } from '@/stores/config';
 import { useAuthStore } from '@/stores/auth';
 import { useAppsStore } from '@/stores/apps';
@@ -577,9 +578,8 @@ const availableVersion = computed(() => {
 });
 const availableReleaseUrl = computed(() => {
   const url = availableUpdate.value?.url;
-  return url?.startsWith('https://github.com/Nonary/Vibepollo/releases/')
-    ? url
-    : 'https://github.com/Nonary/Vibepollo/releases';
+  // ARBS-H R1a (D-R1a-11): only ARBS-H release pages.
+  return isReleasePageUrl(url) ? url : RELEASES_PAGE;
 });
 const notifyPreReleases = ref(true);
 const installedUpdateVersion = ref('');

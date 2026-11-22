@@ -8,6 +8,7 @@ import {
   mergeChangelogEntries,
   sortChangelogEntries,
 } from '@/utils/changelog';
+import { RELEASES_API } from '../../web/utils/repo';
 
 export interface LoadChangelogResult {
   releases: ChangelogEntry[];
@@ -18,7 +19,8 @@ export interface LoadChangelogResult {
 }
 
 const CHANGELOG_ASSET_URL = './assets/changelog.json';
-const GITHUB_RELEASES_URL = 'https://api.github.com/repos/Nonary/Vibepollo/releases';
+// ARBS-H R1a (D-R1a-11): release notes come from arbs-project/arbs-h (bundled notes keep the upstream history).
+const GITHUB_RELEASES_URL = RELEASES_API;
 
 function isChangelogEntry(value: unknown): value is ChangelogEntry {
   return !!value && typeof value === 'object' && typeof (value as ChangelogEntry).tag === 'string';

@@ -19,7 +19,8 @@ static_assert([] {
 using nlohmann::json;
 std::string platform_package() {
 #ifdef _WIN32
-  return "VibepolloSetup.exe";
+  // ARBS-H R1a: the Windows asset name depends on the tag; fix_assets() fills it in.
+  return "@windows-setup@";
 #elif defined(__APPLE__)
 #if defined(__aarch64__) || defined(__arm64__)
   return "Vibepollo-macOS-arm64.dmg";
@@ -56,11 +57,47 @@ json revised_nightly(std::string day, int revision, std::string sha) {
   result["nightly_metadata"]["nightly_sequence"] = std::stoll("202610" + day) * 1000 + revision;
   return result;
 }
+// ARBS-H R1a: replace the placeholder with arbs-h-<tag without v>-setup.exe for the current tag.
+json fix_asset(json item) {
+#ifdef _WIN32
+  if (item.is_object() && item.contains("tag_name") && item["tag_name"].is_string() && item.contains("assets") && item["assets"].is_array()) {
+    auto version = item["tag_name"].get<std::string>();
+    if (version.starts_with('v')) version.erase(0, 1);
+    for (auto &a : item["assets"])
+      if (a.is_object() && a.contains("name") && a["name"] == "@windows-setup@") a["name"] = release_selection::windows_setup_asset(version);
+  }
+#endif
+  return item;
+}
+json raw_select(json releases, const std::string &installed, bool pre) {
+  if (releases.is_array()) for (auto &item : releases) item = fix_asset(item);
+  return release_selection::select(releases, installed, pre);
+}
+#ifdef _WIN32
+// ARBS-H R1a (D-R1a-11): only arbs-h-<version>-setup.exe of the same version notifies; Vibepollo installers never do.
+void arbs_h_windows_asset_checks() {
+  assert(release_selection::windows_setup_asset("0.1.0") == "arbs-h-0.1.0-setup.exe");
+  auto with_asset = [](const std::string &tag, const std::string &name) {
+    return json {{"tag_name", tag}, {"draft", false}, {"prerelease", false},
+                 {"assets", json::array({{{"name", name}, {"state", "uploaded"}, {"size", 100}}})}};
+  };
+  assert(release_selection::select(json::array({with_asset("v0.2.0", "arbs-h-0.2.0-setup.exe")}), "0.1.0", false)["tag_name"] == "v0.2.0");
+  assert(release_selection::select(json::array({with_asset("0.2.0", "arbs-h-0.2.0-setup.exe")}), "0.1.0", false)["tag_name"] == "0.2.0");
+  for (const auto &name : {"VibepolloSetup.exe", "VibepolloSetup-v0.2.0.exe", "VibepolloSetup-0.2.0.exe", "arbs-h-0.1.9-setup.exe",
+                           "arbs-h-v0.2.0-setup.exe", "ARBS-H-0.2.0-setup.exe", "arbs-h-0.2.0-portable.zip"})
+    assert(release_selection::select(json::array({with_asset("v0.2.0", name)}), "0.1.0", false).is_null());
+  // A Vibepollo 2.20.0 release (higher version number) must never be offered to ARBS-H 0.1.0.
+  assert(release_selection::select(json::array({with_asset("v2.20.0", "VibepolloSetup.exe")}), "0.1.0", true).is_null());
+}
+#endif
 int main() {
+#ifdef _WIN32
+  arbs_h_windows_asset_checks();
+#endif
   auto select = [](json releases, const std::string &installed, bool pre) {
     for (auto &item : releases) if (item.is_object() && item.contains("nightly_metadata"))
       item["body"] = "<!-- nightly-identity: " + item["nightly_metadata"].dump() + " -->\n";
-    return release_selection::select(releases, installed, pre);
+    return raw_select(releases, installed, pre);
   };
   auto current_nightly = nightly("22");
   auto next_nightly = nightly("23", std::string(40, '0'));
@@ -69,12 +106,12 @@ int main() {
     item["body"] = "<!-- nightly-identity: " + item["nightly_metadata"].dump() + " -->\n";
     return item;
   };
-  assert(!release_selection::select(json::array({with_body(current_nightly)}), "2.0.1-daily.d20261022.2+aaaaaaaaaaaa", true).is_null());
-  assert(release_selection::select(json::array({with_body(current_nightly)}), current_nightly["tag_name"], true).is_null());
-  assert(release_selection::select(json::array({with_body(same_day_nightly)}), current_nightly["tag_name"], true).is_null());
-  assert(!release_selection::select(json::array({with_body(next_nightly)}), current_nightly["tag_name"], true).is_null());
-  assert(release_selection::select(json::array({with_body(next_nightly)}), "2.0.0", false).is_null());
-  assert(release_selection::select(json::array({with_body(next_nightly)}), "2.0.1", true).is_null());
+  assert(!raw_select(json::array({with_body(current_nightly)}), "2.0.1-daily.d20261022.2+aaaaaaaaaaaa", true).is_null());
+  assert(raw_select(json::array({with_body(current_nightly)}), current_nightly["tag_name"], true).is_null());
+  assert(raw_select(json::array({with_body(same_day_nightly)}), current_nightly["tag_name"], true).is_null());
+  assert(!raw_select(json::array({with_body(next_nightly)}), current_nightly["tag_name"], true).is_null());
+  assert(raw_select(json::array({with_body(next_nightly)}), "2.0.0", false).is_null());
+  assert(raw_select(json::array({with_body(next_nightly)}), "2.0.1", true).is_null());
   auto revision1 = revised_nightly("22", 1, std::string(40, '0'));
   auto revision2 = revised_nightly("22", 2, std::string(40, 'a'));
   auto revision10 = revised_nightly("22", 10, std::string(40, '1'));
@@ -100,26 +137,26 @@ int main() {
   assert(select(json::array({malformed}), "2.0.0", true).is_null());
   auto missing_body = with_body(revision1);
   missing_body.erase("body");
-  assert(release_selection::select(json::array({missing_body}), "2.0.0", true).is_null());
+  assert(raw_select(json::array({missing_body}), "2.0.0", true).is_null());
   auto missing_sums = revision1;
   missing_sums["assets"].erase(2);
   assert(select(json::array({missing_sums}), "2.0.0", true).is_null());
   auto tampered_nightly = current_nightly;
   tampered_nightly["nightly_metadata"]["source_commit"] = std::string(40, 'c');
-  assert(release_selection::select(json::array({with_body(tampered_nightly)}), "2.0.0", true).is_null());
+  assert(raw_select(json::array({with_body(tampered_nightly)}), "2.0.0", true).is_null());
   auto api = daily("12", "2.0.1");
   api["body"] = "<!-- nightly-identity: " + api["nightly_metadata"].dump() + " -->\n";
   api.erase("nightly_metadata");
   api["assets"].erase(1); // No metadata asset required by new clients.
-  assert(!release_selection::select(json::array({api}), "2.0.0", true).is_null());
-  assert(release_selection::select(json::array({api}), "2.0.0", false).is_null());
+  assert(!raw_select(json::array({api}), "2.0.0", true).is_null());
+  assert(raw_select(json::array({api}), "2.0.0", false).is_null());
   auto duplicate = api;
   duplicate["body"] = api["body"].get<std::string>() + api["body"].get<std::string>();
-  assert(release_selection::select(json::array({duplicate}), "2.0.0", true).is_null());
+  assert(raw_select(json::array({duplicate}), "2.0.0", true).is_null());
   api.erase("body");
-  assert(release_selection::select(json::array({api}), "2.0.0", true).is_null());
+  assert(raw_select(json::array({api}), "2.0.0", true).is_null());
   auto releases=json::array({release("1.9.0-stable.2"),release("2.0.0-beta.10",true),release("2.0.0-beta.2",true)});
-  assert(release_selection::complete(releases[0],false));
+  assert(release_selection::complete(fix_asset(releases[0]),false));
   assert(release_selection::compare_notification_versions("1.9.0-stable.1","1.9.0-stable.2")<0);
   assert(select(releases,"1.9.0-stable.1",false)["tag_name"]=="1.9.0-stable.2");
   assert(select(json::array({release("1.9.0"),release("1.9.0-stable.1")}),"1.9.0-stable.2",false).is_null());
@@ -157,7 +194,7 @@ int main() {
   assert(select(json::array({invalid_revision}),"2.0.0",true).is_null());
   auto published=release("2.0.0");
 #ifdef _WIN32
-  published["assets"][0]["name"]="VibepolloSetup-v2.0.0.exe";
+  published["assets"][0]["name"]="arbs-h-2.0.0-setup.exe";  // ARBS-H R1a
 #endif
   assert(select(json::array({published}),"1.18.4-stable.4",false)["tag_name"]=="2.0.0");
   auto wrong_platform=release("9.0.0");

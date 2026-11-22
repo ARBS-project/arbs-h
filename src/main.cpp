@@ -564,7 +564,7 @@ int main(int argc, char *argv[]) {
     auto wnd = CreateWindowExA(
       0,
       wnd_class.lpszClassName,
-      "Sunshine Session Monitor Window",
+      "ARBS-H Session Monitor Window",
       0,
       CW_USEDEFAULT,
       CW_USEDEFAULT,

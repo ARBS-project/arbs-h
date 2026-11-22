@@ -1,0 +1,652 @@
+<#
+.SYNOPSIS
+  ARBS-H installer helper (R1a, D-R1a-1/6/8/9/10). Called by arbs-h.iss, the rollback tool and the log tool.
+
+.DESCRIPTION
+  Every external command (sc.exe, netsh.exe, robocopy.exe, icacls.exe, pnputil.exe, netstat.exe, schtasks.exe,
+  powershell.exe for driver installers) goes through Invoke-Ext. With -DryRun nothing is executed: commands are
+  only recorded, answers come from an injected runner (tests) or from <FakeRoot>\fake.json, and every path the
+  helper may write to must be inside -FakeRoot. With ARBS_H_TEST_NO_REAL_EXEC=1 a real command throws.
+
+  Vibepollo is never modified except the one approved change: ApolloService stop + start type "demand", whose
+  original value is recorded once in <DataRoot>\rollback\apolloservice.json and restored by -Action rollback.
+  Vibepollo files are only read (configuration migration copies with robocopy /B). Drivers are never removed.
+
+.NOTES
+  ASCII only on purpose (Windows PowerShell 5.1 reads BOM-less scripts in the ANSI code page).
+#>
+[CmdletBinding()]
+param(
+  [ValidateSet('lib', 'plan', 'prepare', 'stop-vibepollo', 'post-install', 'migrate', 'ensure-config', 'drivers',
+    'service', 'firewall', 'start', 'uninstall', 'rollback', 'collect-logs', 'snapshot')]
+  [string]$Action = 'lib',
+  [string]$AppDir = (Join-Path $env:ProgramFiles 'ARBS-H'),
+  [string]$DataRoot = (Join-Path $env:ProgramData 'ARBS-H'),
+  [string]$VibepolloConfig = '',
+  [string]$Version = '0.1.0',
+  [string]$PlanOut = '',
+  [string]$ResultOut = '',
+  [string]$OutDir = '',
+  [switch]$Migrate,
+  [switch]$VibepolloStopApproved,
+  [switch]$InstallUsbip,
+  [switch]$InstallSudoVda,
+  [switch]$RemoveConfig,
+  [switch]$RestoreVibepollo,
+  [switch]$DryRun,
+  [string]$FakeRoot = '',
+  [switch]$PlanOnly
+)
+
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+
+# ---------------------------------------------------------------------------------------------------------------
+# Fixed names (must match src/platform/windows/arbs_h_names.h and arbs-h.iss)
+# ---------------------------------------------------------------------------------------------------------------
+$script:ServiceName = 'ARBSHService'
+$script:ServiceDisplayName = 'ARBS-H Service'
+$script:ServiceDescription = 'ARBS-H streaming host (Vibepollo 2.18.9 fork)'
+$script:VibepolloService = 'ApolloService'
+$script:FirewallRules = @(
+  @{ Name = 'ARBS-H'; Program = 'sunshine.exe' },
+  @{ Name = 'ARBS-H Service'; Program = 'tools\sunshinesvc.exe' }
+)
+$script:RestoreTask = '\ARBS-H-DisplayRestore'
+$script:StreamPorts = @(47984, 47989, 47990, 48010)
+$script:MigrateFiles = @('sunshine.conf', 'apps.json', 'sunshine_state.json', 'vibeshine_state.json')
+$script:BackupKeep = 3
+
+$script:Plan = New-Object System.Collections.Generic.List[string]
+$script:Runner = $null
+$script:RealExecCount = 0
+$script:LogFile = $null
+$script:Result = [ordered]@{}
+
+# ---------------------------------------------------------------------------------------------------------------
+# Logging, paths, command execution
+# ---------------------------------------------------------------------------------------------------------------
+function Write-Log([string]$Message) {
+  $line = '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+  if ($script:LogFile) { Add-Content -LiteralPath $script:LogFile -Value $line -Encoding UTF8 }
+  Write-Verbose $line
+}
+
+function Set-Result([string]$Key, [string]$Value) { $script:Result[$Key] = $Value; Write-Log "RESULT $Key=$Value" }
+
+function Test-UnderRoot([string]$Path, [string]$Root) {
+  if (-not $Path -or -not $Root) { return $false }
+  $p = [IO.Path]::GetFullPath($Path).TrimEnd('\') + '\'
+  $r = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
+  return $p.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)
+}
+
+# %ProgramData%\ARBS-H is also the service log root. sunshinesvc.cpp (SecureServiceDirectory) trusts it only when
+# owned by SYSTEM/Administrators with a protected DACL of exactly SYSTEM + Administrators full control (OI)(CI);
+# otherwise it renames the folder to *.untrusted-*, which would move the rollback record away. Create it that way.
+function Initialize-DataRoot {
+  $created = $false
+  if (-not (Test-Path -LiteralPath $DataRoot)) { New-Item -ItemType Directory -Path $DataRoot -Force | Out-Null; $created = $true }
+  [void](Invoke-Ext 'icacls.exe' ('{0} /setowner *S-1-5-32-544 /C /Q' -f (Quote $DataRoot)))
+  [void](Invoke-Ext 'icacls.exe' ('{0} /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /C /Q' -f (Quote $DataRoot)))
+  Write-Log "data root secured (created=$created): $DataRoot"
+}
+
+function Initialize-Context {
+  if (-not $VibepolloConfig) { $script:VibepolloConfig = '' }
+  if ($DryRun) {
+    if (-not $FakeRoot -or -not (Test-Path -LiteralPath $FakeRoot -PathType Container)) {
+      throw 'DryRun requires an existing -FakeRoot directory.'
+    }
+    foreach ($p in @($AppDir, $DataRoot) + @($(if ($VibepolloConfig) { $VibepolloConfig })) + @($(if ($OutDir) { $OutDir }))) {
+      if (-not (Test-UnderRoot $p $FakeRoot)) { throw "DryRun path outside FakeRoot: $p" }
+    }
+  }
+  # Read-only steps (plan, snapshot, collect-logs, rollback -Plan) never create anything under DataRoot.
+  if (-not $PlanOnly -and @('plan', 'snapshot', 'collect-logs', 'lib') -notcontains $Action) {
+    Initialize-DataRoot
+    $logDir = Join-Path $DataRoot 'setup-logs'
+    if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+    $script:LogFile = Join-Path $logDir ('{0}-{1}.log' -f $Action, (Get-Date -Format 'yyyyMMdd-HHmmss'))
+  }
+  Write-Log "ARBS-H helper $Version action=$Action dryrun=$([bool]$DryRun) planonly=$([bool]$PlanOnly) app=$AppDir data=$DataRoot"
+}
+
+function Resolve-SystemExe([string]$Exe) {
+  $sys = Join-Path $env:SystemRoot 'System32'
+  switch ($Exe.ToLowerInvariant()) {
+    'powershell.exe' { return (Join-Path $sys 'WindowsPowerShell\v1.0\powershell.exe') }
+    default { return (Join-Path $sys $Exe) }
+  }
+}
+
+function Get-FakeResult([string]$Exe, [string]$Arguments) {
+  $file = Join-Path $FakeRoot 'fake.json'
+  if (Test-Path -LiteralPath $file) {
+    $rules = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+    foreach ($rule in @($rules)) {
+      if (("$Exe $Arguments") -match $rule.match) {
+        return @{ ExitCode = [int]$rule.exit; Output = [string]$rule.output }
+      }
+    }
+  }
+  return @{ ExitCode = 0; Output = '' }
+}
+
+# The only place that may start a process.
+function Invoke-Ext([string]$Exe, [string]$Arguments) {
+  $line = "$Exe $Arguments"
+  $script:Plan.Add($line)
+  Write-Log "RUN $line"
+  if ($PlanOnly) { Write-Output "PLAN $line" | Out-Host; return @{ ExitCode = 0; Output = '' } }
+  if ($DryRun) {
+    if ($script:Runner) { $r = & $script:Runner $Exe $Arguments } else { $r = Get-FakeResult $Exe $Arguments }
+    Write-Log ("  exit={0}" -f $r.ExitCode)
+    return $r
+  }
+  if ($env:ARBS_H_TEST_NO_REAL_EXEC -eq '1') { throw "Real command blocked (ARBS_H_TEST_NO_REAL_EXEC=1): $line" }
+  $script:RealExecCount++
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = Resolve-SystemExe $Exe
+  $psi.Arguments = $Arguments
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow = $true
+  $p = [System.Diagnostics.Process]::Start($psi)
+  $out = $p.StandardOutput.ReadToEndAsync()
+  $err = $p.StandardError.ReadToEndAsync()
+  $p.WaitForExit()
+  $text = $out.Result + $err.Result
+  Write-Log ("  exit={0}" -f $p.ExitCode)
+  return @{ ExitCode = $p.ExitCode; Output = $text }
+}
+
+function Wait-Short([int]$Milliseconds) { if (-not $DryRun -and -not $PlanOnly) { Start-Sleep -Milliseconds $Milliseconds } }
+
+function Quote([string]$s) { return '"' + $s + '"' }
+
+# ---------------------------------------------------------------------------------------------------------------
+# Read-only queries (language independent: only English keys/values of sc.exe and numbers are parsed)
+# ---------------------------------------------------------------------------------------------------------------
+function Get-ServiceInfo([string]$Name) {
+  $qc = Invoke-Ext 'sc.exe' "qc $Name"
+  if ($qc.ExitCode -eq 1060 -or ($qc.ExitCode -ne 0 -and $qc.Output -match '\b1060\b')) {
+    return @{ Installed = $false; StartType = 0; Delayed = $false; State = 'NONE'; BinaryPath = '' }
+  }
+  if ($qc.ExitCode -ne 0) { throw "sc qc $Name failed with exit code $($qc.ExitCode)" }
+  if ($qc.Output -notmatch 'START_TYPE\s*:\s*(\d+)') { throw "sc qc ${Name}: START_TYPE not found" }
+  $start = [int]$matches[1]
+  $delayed = [bool]($qc.Output -match 'START_TYPE\s*:\s*\d+\s+AUTO_START\s+\(DELAYED\)')
+  $bin = ''
+  if ($qc.Output -match 'BINARY_PATH_NAME\s*:\s*([^\r\n]+)') { $bin = $matches[1].Trim() }
+  $q = Invoke-Ext 'sc.exe' "query $Name"
+  $state = 'UNKNOWN'
+  if ($q.Output -match ':\s*\d+\s+(STOPPED|START_PENDING|STOP_PENDING|RUNNING|CONTINUE_PENDING|PAUSE_PENDING|PAUSED)\b') {
+    $state = $matches[1]
+  }
+  return @{ Installed = $true; StartType = $start; Delayed = $delayed; State = $state; BinaryPath = $bin }
+}
+
+function ConvertTo-StartName([int]$StartType, [bool]$Delayed) {
+  switch ($StartType) {
+    2 { if ($Delayed) { return 'delayed-auto' } else { return 'auto' } }
+    3 { return 'demand' }
+    4 { return 'disabled' }
+    default { return "type$StartType" }
+  }
+}
+
+function Get-ExeFromBinaryPath([string]$BinaryPath) {
+  if (-not $BinaryPath) { return '' }
+  if ($BinaryPath.StartsWith('"')) { $end = $BinaryPath.IndexOf('"', 1); if ($end -gt 1) { return $BinaryPath.Substring(1, $end - 1) } }
+  $i = $BinaryPath.ToLowerInvariant().IndexOf('.exe')
+  if ($i -gt 0) { return $BinaryPath.Substring(0, $i + 4) }
+  return $BinaryPath
+}
+
+# Vibepollo configuration folder from the ApolloService binary path (<root>\tools\sunshinesvc.exe -> <root>\config).
+function Get-VibepolloConfigDir($ApolloInfo) {
+  if ($VibepolloConfig) { return $VibepolloConfig }
+  if ($ApolloInfo.Installed) {
+    $exe = Get-ExeFromBinaryPath $ApolloInfo.BinaryPath
+    if ($exe) {
+      $root = Split-Path -Parent (Split-Path -Parent $exe)
+      if ($root) { return (Join-Path $root 'config') }
+    }
+  }
+  return 'C:\Vibepollo\config'
+}
+
+# DryRun never looks outside FakeRoot (the result must not depend on this PC's real Vibepollo folder).
+function Test-PathInScope([string]$Path) {
+  if ($DryRun -and -not (Test-UnderRoot $Path $FakeRoot)) { Write-Log "dry-run: outside FakeRoot treated as missing: $Path"; return $false }
+  return (Test-Path -LiteralPath $Path)
+}
+
+function Test-UsbipPresent { return ((Invoke-Ext 'sc.exe' 'query usbip2_ude').ExitCode -eq 0) }
+
+function Test-SudoVdaPresent {
+  $r = Invoke-Ext 'pnputil.exe' '/enum-devices /class Display'
+  return ($r.ExitCode -eq 0 -and $r.Output -match '(?i)SudoMaker Virtual Display|SUDOVDA')
+}
+
+function Get-BusyPorts {
+  $r = Invoke-Ext 'netstat.exe' '-ano -p TCP'
+  $busy = @()
+  foreach ($line in ($r.Output -split "`r?`n")) {
+    if ($line -match '^\s*TCP\s+\S+:(\d+)\s+\S+:0\s+') {
+      $port = [int]$matches[1]
+      if ($script:StreamPorts -contains $port -and $busy -notcontains $port) { $busy += $port }
+    }
+  }
+  return , $busy
+}
+
+function Wait-ServiceState([string]$Name, [string]$Wanted, [int]$Seconds) {
+  for ($i = 0; $i -le $Seconds; $i++) {
+    $info = Get-ServiceInfo $Name
+    if (-not $info.Installed -or $info.State -eq $Wanted) { return $true }
+    Wait-Short 1000
+  }
+  return $false
+}
+
+# ---------------------------------------------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------------------------------------------
+function Invoke-Plan {
+  $apollo = Get-ServiceInfo $script:VibepolloService
+  $own = Get-ServiceInfo $script:ServiceName
+  $vcfg = Get-VibepolloConfigDir $apollo
+  $values = [ordered]@{
+    apollo_installed = [int]$apollo.Installed
+    apollo_start     = $(if ($apollo.Installed) { ConvertTo-StartName $apollo.StartType $apollo.Delayed } else { '' })
+    apollo_state     = $apollo.State
+    vibepollo_config = $(if (Test-PathInScope (Join-Path $vcfg 'sunshine.conf')) { $vcfg } else { '' })
+    arbsh_installed  = [int]$own.Installed
+    arbsh_config     = [int](Test-Path -LiteralPath (Join-Path $AppDir 'config\sunshine.conf'))
+    usbip_present    = [int](Test-UsbipPresent)
+    sudovda_present  = [int](Test-SudoVdaPresent)
+    ports_busy       = ((Get-BusyPorts) -join ',')
+    rollback_record  = [int](Test-Path -LiteralPath (Join-Path $DataRoot 'rollback\apolloservice.json'))
+  }
+  $lines = foreach ($k in $values.Keys) { '{0}={1}' -f $k, $values[$k] }
+  if ($PlanOut) { [IO.File]::WriteAllLines($PlanOut, [string[]]$lines, (New-Object Text.UTF8Encoding($false))) }
+  $lines | ForEach-Object { Write-Log "PLAN $_" }
+  return $values
+}
+
+function Save-ApolloRecord($Info) {
+  $dir = Join-Path $DataRoot 'rollback'
+  $path = Join-Path $dir 'apolloservice.json'
+  if (Test-Path -LiteralPath $path) { Write-Log "record exists, kept as is: $path"; return $false }
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+  $record = [ordered]@{
+    Service      = $script:VibepolloService
+    StartType    = $Info.StartType
+    Delayed      = [bool]$Info.Delayed
+    StartName    = (ConvertTo-StartName $Info.StartType $Info.Delayed)
+    State        = $Info.State
+    RecordedAt   = (Get-Date).ToString('s')
+    ArbsHVersion = $Version
+  }
+  [IO.File]::WriteAllText($path, ($record | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+  Write-Log "record written: $path"
+  return $true
+}
+
+function Invoke-StopVibepollo {
+  $info = Get-ServiceInfo $script:VibepolloService
+  if (-not $info.Installed) { Set-Result 'vibepollo' 'not-installed'; return 0 }
+  [void](Save-ApolloRecord $info)
+  if ($info.State -ne 'STOPPED') {
+    [void](Invoke-Ext 'sc.exe' "stop $($script:VibepolloService)")
+    if (-not (Wait-ServiceState $script:VibepolloService 'STOPPED' 60)) { Set-Result 'vibepollo' 'stop-timeout'; return 2 }
+  }
+  $r = Invoke-Ext 'sc.exe' "config $($script:VibepolloService) start= demand"
+  if ($r.ExitCode -ne 0) { Set-Result 'vibepollo' 'config-failed'; return 2 }
+  Set-Result 'vibepollo' 'stopped-demand'
+  return 0
+}
+
+function Get-NewLine([string]$Text) { if ($Text -match "`r`n") { return "`r`n" } return "`n" }
+
+# D-R1a-10: one disabled dd_use_sunshine_virtual_display_driver line, gamepad = usbip_ds5, update defaults if
+# missing, lines pointing into the old Vibepollo folder commented out. Everything else is kept as is.
+function Repair-ConfText([string]$Text) {
+  $nl = Get-NewLine $Text
+  $lines = @()
+  if ($Text.Length -gt 0) { $lines = @($Text -split "`r?`n") }
+  if ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines = @($lines[0..($lines.Count - 2)]) }
+  $out = New-Object System.Collections.Generic.List[string]
+  $hasGamepad = $false; $hasInterval = $false; $hasPre = $false
+  foreach ($line in $lines) {
+    if ($line -match '^\s*dd_use_sunshine_virtual_display_driver\s*=') { continue }
+    if ($line -match '^\s*gamepad\s*=') { $out.Add('gamepad = usbip_ds5'); $hasGamepad = $true; continue }
+    if ($line -match '^\s*update_check_interval\s*=') { $hasInterval = $true }
+    if ($line -match '^\s*notify_pre_releases\s*=') { $hasPre = $true }
+    if ($line -notmatch '^\s*#' -and $line -match '(?i)[\\/]Vibepollo[\\/]') { $out.Add('# arbs-h migrate (old Vibepollo path): ' + $line); continue }
+    $out.Add($line)
+  }
+  if (-not $hasGamepad) { $out.Add('gamepad = usbip_ds5') }
+  $out.Add('dd_use_sunshine_virtual_display_driver = disabled')
+  if (-not $hasInterval) { $out.Add('update_check_interval = 86400') }
+  if (-not $hasPre) { $out.Add('notify_pre_releases = false') }
+  return (($out -join $nl) + $nl)
+}
+
+function Invoke-Migrate {
+  $target = Join-Path $AppDir 'config'
+  if (Test-Path -LiteralPath (Join-Path $target 'sunshine.conf')) { Set-Result 'migrate' 'skipped-existing-config'; return 0 }
+  $apollo = Get-ServiceInfo $script:VibepolloService
+  if ($apollo.Installed -and $apollo.State -ne 'STOPPED') { Set-Result 'migrate' 'refused-vibepollo-running'; return 3 }
+  $source = Get-VibepolloConfigDir $apollo
+  if (-not (Test-PathInScope (Join-Path $source 'sunshine.conf'))) { Set-Result 'migrate' 'no-source'; return 3 }
+  $tmp = Join-Path $AppDir 'config.migrating'
+  if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+  $ok = $true
+  $files = ($script:MigrateFiles | ForEach-Object { $_ }) -join ' '
+  $r = Invoke-Ext 'robocopy.exe' ('{0} {1} {2} /B /COPY:DAT /R:0 /W:0 /NP /NJH /NJS' -f (Quote $source), (Quote $tmp), $files)
+  if ($r.ExitCode -ge 8) { $ok = $false }
+  $r = Invoke-Ext 'robocopy.exe' ('{0} {1} /E /B /COPY:DAT /R:0 /W:0 /NP /NJH /NJS' -f (Quote (Join-Path $source 'credentials')), (Quote (Join-Path $tmp 'credentials')))
+  if ($r.ExitCode -ge 8) { $ok = $false }
+  foreach ($f in $script:MigrateFiles) { if (-not (Test-Path -LiteralPath (Join-Path $tmp $f) -PathType Leaf)) { $ok = $false; Write-Log "missing after copy: $f" } }
+  $cred = Join-Path $tmp 'credentials'
+  if (-not (Test-Path -LiteralPath $cred -PathType Container) -or -not (Get-ChildItem -LiteralPath $cred -Force | Select-Object -First 1)) {
+    $ok = $false; Write-Log 'missing after copy: credentials\'
+  }
+  if (-not $ok) {
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    Set-Result 'migrate' 'failed-all-discarded'
+    return 3
+  }
+  $conf = Join-Path $tmp 'sunshine.conf'
+  Copy-Item -LiteralPath $conf -Destination (Join-Path $tmp 'sunshine.conf.from-vibepollo') -Force
+  $text = [IO.File]::ReadAllText($conf)
+  [IO.File]::WriteAllText($conf, (Repair-ConfText $text), (New-Object Text.UTF8Encoding($false)))
+  $r = Invoke-Ext 'icacls.exe' ('{0} /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /T /C /Q' -f (Quote $cred))
+  if ($r.ExitCode -ne 0) { Write-Log 'icacls on copied credentials failed (copy kept, inherited ACL)' }
+  if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+  Rename-Item -LiteralPath $tmp -NewName 'config'
+  Set-Result 'migrate' 'ok'
+  return 0
+}
+
+function Invoke-EnsureConfig {
+  $target = Join-Path $AppDir 'config'
+  $conf = Join-Path $target 'sunshine.conf'
+  if (Test-Path -LiteralPath $conf) { Set-Result 'config' 'kept'; return 0 }
+  $template = Join-Path $AppDir 'config-template\sunshine.conf'
+  if (-not (Test-Path -LiteralPath $template)) { Set-Result 'config' 'template-missing'; return 1 }
+  if (-not (Test-Path -LiteralPath $target)) { New-Item -ItemType Directory -Path $target -Force | Out-Null }
+  Copy-Item -LiteralPath $template -Destination $conf
+  Set-Result 'config' 'new-from-template'
+  return 0
+}
+
+function Invoke-Drivers {
+  $rc = 0
+  if (Test-UsbipPresent) { Set-Result 'usbip' 'present' }
+  elseif ($InstallUsbip) {
+    $script = Join-Path $AppDir 'drivers\usbip-win2\install.ps1'
+    $r = Invoke-Ext 'powershell.exe' ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0} -InstallerBestEffort' -f (Quote $script))
+    if ($r.ExitCode -eq 0) { Set-Result 'usbip' 'installed' } else { Set-Result 'usbip' 'install-failed'; $rc = 4 }
+  }
+  else { Set-Result 'usbip' 'missing' }
+  if (Test-SudoVdaPresent) { Set-Result 'sudovda' 'present' }
+  elseif ($InstallSudoVda) {
+    $script = Join-Path $AppDir 'drivers\sudovda\install.ps1'
+    $r = Invoke-Ext 'powershell.exe' ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0} -InstallerBestEffort' -f (Quote $script))
+    if ($r.ExitCode -eq 0) { Set-Result 'sudovda' 'installed' } else { Set-Result 'sudovda' 'install-failed'; $rc = 4 }
+  }
+  else { Set-Result 'sudovda' 'missing' }
+  return $rc
+}
+
+function Get-ServiceBinPath { return (Quote (Join-Path $AppDir 'tools\sunshinesvc.exe')) }
+
+function Invoke-Service {
+  $own = Get-ServiceInfo $script:ServiceName
+  $bin = Get-ServiceBinPath
+  # sc.exe needs the embedded quotes escaped: binPath= "\"C:\Program Files\ARBS-H\tools\sunshinesvc.exe\""
+  $binArg = '"' + $bin.Replace('"', '\"') + '"'
+  if (-not $own.Installed) {
+    $r = Invoke-Ext 'sc.exe' ('create {0} binPath= {1} start= demand obj= LocalSystem DisplayName= {2}' -f $script:ServiceName, $binArg, (Quote $script:ServiceDisplayName))
+    if ($r.ExitCode -ne 0) { Set-Result 'service' 'create-failed'; return 1 }
+    Set-Result 'service' 'created'
+  }
+  else {
+    if ($own.BinaryPath -ne $bin) {
+      $r = Invoke-Ext 'sc.exe' ('config {0} binPath= {1}' -f $script:ServiceName, $binArg)
+      if ($r.ExitCode -ne 0) { Set-Result 'service' 'config-failed'; return 1 }
+      Set-Result 'service' 'binpath-updated'
+    }
+    else { Set-Result 'service' 'kept' }
+  }
+  [void](Invoke-Ext 'sc.exe' ('description {0} {1}' -f $script:ServiceName, (Quote $script:ServiceDescription)))
+  return 0
+}
+
+function Invoke-Firewall {
+  $rc = 0
+  foreach ($rule in $script:FirewallRules) {
+    [void](Invoke-Ext 'netsh.exe' ('advfirewall firewall delete rule name={0}' -f (Quote $rule.Name)))
+    $program = Join-Path $AppDir $rule.Program
+    $r = Invoke-Ext 'netsh.exe' ('advfirewall firewall add rule name={0} dir=in action=allow program={1} enable=yes profile=any' -f (Quote $rule.Name), (Quote $program))
+    if ($r.ExitCode -ne 0) { $rc = 1 }
+  }
+  Set-Result 'firewall' $(if ($rc -eq 0) { 'ok' } else { 'failed' })
+  return $rc
+}
+
+# Start now and on every boot only when Vibepollo cannot take the same ports: either the user approved the stop
+# (ApolloService now demand + stopped) or ApolloService is absent/manual/disabled and the ports are free.
+function Invoke-Start {
+  $apollo = Get-ServiceInfo $script:VibepolloService
+  $apolloAuto = $apollo.Installed -and ($apollo.StartType -eq 2 -or $apollo.State -ne 'STOPPED')
+  $busy = Get-BusyPorts
+  if ($apolloAuto -or $busy.Count -gt 0) {
+    [void](Invoke-Ext 'sc.exe' ('config {0} start= demand' -f $script:ServiceName))
+    Set-Result 'start' ('deferred-conflict ports=' + ($busy -join ',') + ' apollo=' + $(if ($apollo.Installed) { ConvertTo-StartName $apollo.StartType $apollo.Delayed } else { 'none' }) + '/' + $apollo.State)
+    return 10
+  }
+  [void](Invoke-Ext 'sc.exe' ('config {0} start= auto' -f $script:ServiceName))
+  $r = Invoke-Ext 'sc.exe' ('start {0}' -f $script:ServiceName)
+  if ($r.ExitCode -ne 0 -and $r.ExitCode -ne 1056) { Set-Result 'start' 'auto-start-failed'; return 1 }
+  Set-Result 'start' 'auto-started'
+  return 0
+}
+
+function Invoke-Prepare {
+  $own = Get-ServiceInfo $script:ServiceName
+  if ($own.Installed -and $own.State -ne 'STOPPED') {
+    [void](Invoke-Ext 'sc.exe' ('stop {0}' -f $script:ServiceName))
+    if (-not (Wait-ServiceState $script:ServiceName 'STOPPED' 60)) { Set-Result 'prepare' 'stop-timeout'; return 2 }
+  }
+  $config = Join-Path $AppDir 'config'
+  if (Test-Path -LiteralPath (Join-Path $config 'sunshine.conf')) {
+    $old = 'unknown'
+    $vf = Join-Path $AppDir 'arbs-h-version.txt'
+    if (Test-Path -LiteralPath $vf) { $old = ((Get-Content -LiteralPath $vf -TotalCount 1) -replace '[^0-9A-Za-z.\-+]', '') }
+    $backupRoot = Join-Path $DataRoot 'backup'
+    $dest = Join-Path $backupRoot ('config-{0}-{1}' -f $old, (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $r = Invoke-Ext 'robocopy.exe' ('{0} {1} /E /B /COPY:DAT /R:0 /W:0 /NP /NJH /NJS' -f (Quote $config), (Quote $dest))
+    if ($r.ExitCode -ge 8) { Set-Result 'prepare' 'backup-failed'; return 2 }
+    $all = @(Get-ChildItem -LiteralPath $backupRoot -Directory -Filter 'config-*' -ErrorAction SilentlyContinue | Sort-Object CreationTimeUtc, Name -Descending)
+    if ($all.Count -gt $script:BackupKeep) { $all[$script:BackupKeep..($all.Count - 1)] | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force } }
+    Set-Result 'prepare' ('backup ' + (Split-Path -Leaf $dest))
+  }
+  else { Set-Result 'prepare' 'no-config' }
+  return 0
+}
+
+function Invoke-PostInstall {
+  $rc = 0
+  if ($Migrate) {
+    if ((Invoke-Migrate) -ne 0) { $rc = 3 }
+  }
+  else { Set-Result 'migrate' 'not-selected' }
+  if ((Invoke-EnsureConfig) -ne 0) { return 1 }
+  if ((Invoke-Drivers) -ne 0 -and $rc -eq 0) { $rc = 4 }
+  if ((Invoke-Service) -ne 0) { return 1 }
+  if ((Invoke-Firewall) -ne 0) { return 1 }
+  [IO.File]::WriteAllText((Join-Path $AppDir 'arbs-h-version.txt'), $Version, (New-Object Text.UTF8Encoding($false)))
+  $s = Invoke-Start
+  if ($s -eq 1) { return 1 }
+  if ($s -eq 10 -and $rc -eq 0) { $rc = 10 }
+  return $rc
+}
+
+function Restore-ApolloService {
+  $path = Join-Path $DataRoot 'rollback\apolloservice.json'
+  if (-not (Test-Path -LiteralPath $path)) { Set-Result 'vibepollo' 'no-record'; return 0 }
+  $rec = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+  if ($rec.Service -ne $script:VibepolloService) { throw "unexpected record service: $($rec.Service)" }
+  $name = ConvertTo-StartName ([int]$rec.StartType) ([bool]$rec.Delayed)
+  if (@('auto', 'delayed-auto', 'demand', 'disabled') -notcontains $name) { throw "unexpected start type in record: $name" }
+  $r = Invoke-Ext 'sc.exe' ('config {0} start= {1}' -f $script:VibepolloService, $name)
+  if ($r.ExitCode -ne 0) { Set-Result 'vibepollo' 'restore-config-failed'; return 5 }
+  if ($rec.State -eq 'RUNNING') {
+    $r = Invoke-Ext 'sc.exe' ('start {0}' -f $script:VibepolloService)
+    if ($r.ExitCode -ne 0 -and $r.ExitCode -ne 1056) { Set-Result 'vibepollo' 'restore-start-failed'; return 5 }
+  }
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  if ($PlanOnly) { Write-Host "PLAN rename $path -> apolloservice.json.restored-$stamp" }
+  else { Rename-Item -LiteralPath $path -NewName ('apolloservice.json.restored-' + $stamp) }
+  Set-Result 'vibepollo' ('restored ' + $name + '/' + $rec.State)
+  return 0
+}
+
+# Rollback tool: ARBS-H off (manual), then Vibepollo service back to its recorded values. No queries needed.
+function Invoke-Rollback {
+  [void](Invoke-Ext 'sc.exe' ('stop {0}' -f $script:ServiceName))
+  [void](Invoke-Ext 'sc.exe' ('config {0} start= demand' -f $script:ServiceName))
+  if (-not $PlanOnly) { [void](Wait-ServiceState $script:ServiceName 'STOPPED' 60) }
+  return (Restore-ApolloService)
+}
+
+function Invoke-Uninstall {
+  [void](Invoke-Ext 'sc.exe' ('stop {0}' -f $script:ServiceName))
+  [void](Wait-ServiceState $script:ServiceName 'STOPPED' 60)
+  [void](Invoke-Ext 'sc.exe' ('delete {0}' -f $script:ServiceName))
+  foreach ($rule in $script:FirewallRules) { [void](Invoke-Ext 'netsh.exe' ('advfirewall firewall delete rule name={0}' -f (Quote $rule.Name))) }
+  [void](Invoke-Ext 'schtasks.exe' ('/Delete /TN {0} /F' -f (Quote $script:RestoreTask)))
+  if ($RemoveConfig) {
+    foreach ($p in @((Join-Path $AppDir 'config'), (Join-Path $DataRoot 'Logs'), (Join-Path $DataRoot 'backup'))) {
+      if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force; Write-Log "removed $p" }
+    }
+    Set-Result 'config' 'removed'
+  }
+  else { Set-Result 'config' 'kept' }
+  $rc = 0
+  if ($RestoreVibepollo) { $rc = Restore-ApolloService } else { Set-Result 'vibepollo' 'not-restored' }
+  Set-Result 'drivers' 'kept'
+  return $rc
+}
+
+function Get-DesktopDir {
+  if ($OutDir) { return $OutDir }
+  return [Environment]::GetFolderPath('Desktop')
+}
+
+# Read-only state report (no administrator needed): services, rules, tasks, Vibepollo file list (no credentials).
+function Invoke-Snapshot {
+  $out = Join-Path (Get-DesktopDir) ('ARBS-H-snapshot-{0}.txt' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+  $sb = New-Object System.Text.StringBuilder
+  foreach ($cmd in @(
+      @('sc.exe', "qc $($script:VibepolloService)"), @('sc.exe', "query $($script:VibepolloService)"),
+      @('sc.exe', "qc $($script:ServiceName)"), @('sc.exe', "query $($script:ServiceName)"),
+      @('netsh.exe', 'advfirewall firewall show rule name="Vibepollo"'), @('netsh.exe', 'advfirewall firewall show rule name="Vibepollo Service"'),
+      @('netsh.exe', 'advfirewall firewall show rule name="ARBS-H"'), @('netsh.exe', 'advfirewall firewall show rule name="ARBS-H Service"'),
+      @('schtasks.exe', '/Query /TN "\VibepolloDisplayRestore"'), @('schtasks.exe', ('/Query /TN "{0}"' -f $script:RestoreTask)))) {
+    $r = Invoke-Ext $cmd[0] $cmd[1]
+    [void]$sb.AppendLine("### $($cmd[0]) $($cmd[1])  (exit $($r.ExitCode))")
+    [void]$sb.AppendLine($r.Output)
+  }
+  $apollo = Get-ServiceInfo $script:VibepolloService
+  $vroot = Split-Path -Parent (Get-VibepolloConfigDir $apollo)
+  [void]$sb.AppendLine("### file list $vroot (name size lastwrite; config\credentials skipped)")
+  if (Test-Path -LiteralPath $vroot) {
+    Get-ChildItem -LiteralPath $vroot -Recurse -Force -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -notmatch '(?i)\\config\\credentials(\\|$)' } |
+      Sort-Object FullName | ForEach-Object {
+        [void]$sb.AppendLine(('{0} {1} {2}' -f $_.FullName.Substring($vroot.Length).TrimStart('\'), $_.Length, $_.LastWriteTimeUtc.ToString('s')))
+      }
+  }
+  [IO.File]::WriteAllText($out, $sb.ToString(), (New-Object Text.UTF8Encoding($false)))
+  Set-Result 'snapshot' $out
+  return 0
+}
+
+# Administrator log collection: ARBS-H logs only (no credentials, state or conf files).
+function Invoke-CollectLogs {
+  $dest = Join-Path (Get-DesktopDir) ('ARBS-H-logs-{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+  New-Item -ItemType Directory -Path $dest -Force | Out-Null
+  $sources = @(
+    @{ From = (Join-Path $AppDir 'config'); Filter = 'sunshine*.log*'; To = 'config' },
+    @{ From = (Join-Path $AppDir 'config\logs'); Filter = '*'; To = 'config-logs' },
+    @{ From = (Join-Path $DataRoot 'Logs'); Filter = '*'; To = 'service-logs' },
+    @{ From = (Join-Path $DataRoot 'setup-logs'); Filter = '*'; To = 'setup-logs' }
+  )
+  $count = 0
+  foreach ($s in $sources) {
+    if (-not (Test-Path -LiteralPath $s.From)) { continue }
+    $files = @(Get-ChildItem -LiteralPath $s.From -File -Filter $s.Filter -Force -ErrorAction SilentlyContinue)
+    if ($files.Count -eq 0) { continue }
+    $to = Join-Path $dest $s.To
+    New-Item -ItemType Directory -Path $to -Force | Out-Null
+    foreach ($f in $files) {
+      if ($f.Name -match '(?i)\.(conf|json|pem|key|crt)$|credential|state') { continue }
+      Copy-Item -LiteralPath $f.FullName -Destination $to -Force; $count++
+    }
+  }
+  foreach ($cmd in @(@('sc.exe', "query $($script:ServiceName)"), @('sc.exe', "qc $($script:ServiceName)"), @('sc.exe', "query $($script:VibepolloService)"), @('sc.exe', "qc $($script:VibepolloService)"))) {
+    $r = Invoke-Ext $cmd[0] $cmd[1]
+    Add-Content -LiteralPath (Join-Path $dest 'services.txt') -Value ("### {0} {1} (exit {2})`r`n{3}" -f $cmd[0], $cmd[1], $r.ExitCode, $r.Output) -Encoding UTF8
+  }
+  Set-Result 'logs' ("$dest files=$count")
+  return 0
+}
+
+function Write-ResultFile {
+  if (-not $ResultOut) { return }
+  $lines = foreach ($k in $script:Result.Keys) { '{0}={1}' -f $k, $script:Result[$k] }
+  [IO.File]::WriteAllLines($ResultOut, [string[]]@($lines), (New-Object Text.UTF8Encoding($false)))
+}
+
+function Invoke-Main {
+  Initialize-Context
+  $rc = 0
+  try {
+    switch ($Action) {
+      'plan' { [void](Invoke-Plan) }
+      'prepare' { $rc = Invoke-Prepare }
+      'stop-vibepollo' { if (-not $VibepolloStopApproved) { throw 'stop-vibepollo needs -VibepolloStopApproved (user approval).' }; $rc = Invoke-StopVibepollo }
+      'post-install' { $rc = Invoke-PostInstall }
+      'migrate' { $rc = Invoke-Migrate }
+      'ensure-config' { $rc = Invoke-EnsureConfig }
+      'drivers' { $rc = Invoke-Drivers }
+      'service' { $rc = Invoke-Service }
+      'firewall' { $rc = Invoke-Firewall }
+      'start' { $rc = Invoke-Start }
+      'uninstall' { $rc = Invoke-Uninstall }
+      'rollback' { $rc = Invoke-Rollback }
+      'collect-logs' { $rc = Invoke-CollectLogs }
+      'snapshot' { $rc = Invoke-Snapshot }
+    }
+  }
+  catch {
+    Write-Log ("ERROR " + $_.Exception.Message)
+    Set-Result 'error' $_.Exception.Message
+    $rc = 1
+  }
+  Write-ResultFile
+  Write-Log "exit $rc"
+  return $rc
+}
+
+if ($Action -ne 'lib') {
+  $code = Invoke-Main
+  exit $code
+}

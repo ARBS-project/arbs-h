@@ -86,7 +86,7 @@ const resources = computed(() => [
     avatarStyle: 'background-color: rgba(16, 185, 129, 0.15); color: rgb(16, 185, 129);',
   },
   {
-    href: 'https://github.com/Nonary/Vibepollo/issues',
+    href: 'https://github.com/arbs-project/arbs-h/issues', // ARBS-H R1a
     icon: 'fab fa-github',
     title: t('resource_card.github_issues'),
     description: t('resource_card.github_issues_desc'),

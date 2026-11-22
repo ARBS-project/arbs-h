@@ -1,11 +1,26 @@
 # Publisher Metadata
-set(SUNSHINE_PUBLISHER_NAME "Nonary"
+set(SUNSHINE_PUBLISHER_NAME "ARBS project"
         CACHE STRING "The name of the publisher (not developer) of the application.")
-set(SUNSHINE_PUBLISHER_WEBSITE "https://github.com/Nonary/Vibepollo"
+set(SUNSHINE_PUBLISHER_WEBSITE "https://github.com/arbs-project/arbs-h"
         CACHE STRING "The URL of the publisher's website.")
-set(SUNSHINE_PUBLISHER_ISSUE_URL "https://github.com/Nonary/Vibepollo/issues"
+set(SUNSHINE_PUBLISHER_ISSUE_URL "https://github.com/arbs-project/arbs-h/issues"
         CACHE STRING "The URL of the publisher's support site or issue tracker.
         If you provide a modified version of Sunshine, we kindly request that you use your own url.")
+
+# ARBS-H R1a (D-R1a-2/3/11): machine-wide names that must never collide with Vibepollo, and the
+# update check default. The installer (packaging/windows/arbs-h) uses the same service name.
+set(ARBS_H_SERVICE_NAME "ARBSHService" CACHE STRING "Windows service name of ARBS-H (must differ from ApolloService)")
+set(ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS "0" CACHE STRING
+        "Default update_check_interval in seconds (0 = off; installer builds use 86400)")
+if(NOT ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS must be a non-negative integer")
+endif()
+if(ARBS_H_SERVICE_NAME STREQUAL "ApolloService" OR NOT ARBS_H_SERVICE_NAME MATCHES "^[A-Za-z0-9_]+$")
+    message(FATAL_ERROR "ARBS_H_SERVICE_NAME must be a plain name and must not be ApolloService")
+endif()
+add_compile_definitions(ARBS_H_SERVICE_NAME="${ARBS_H_SERVICE_NAME}"
+        ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS=${ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS})
+message(STATUS "ARBS-H service name: ${ARBS_H_SERVICE_NAME}, update check default: ${ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS}s")
 
 option(BUILD_DOCS "Build documentation" OFF)
 option(BUILD_TESTS "Build unit tests." ON)

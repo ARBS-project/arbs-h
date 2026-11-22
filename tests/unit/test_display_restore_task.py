@@ -36,12 +36,18 @@ struct ITaskFolder {
     source = directory / 'test.cpp'
     source.write_text('''#include <cassert>
 #include <initializer_list>
+#include <cwchar>
+#include "src/platform/windows/arbs_h_names.h"
 #include "src/platform/windows/display_restore_task.h"
 int main() {
+  // ARBS-H R1a (D-R1a-3): the restore task never shares Vibepollo's task identity.
+  assert(std::wcscmp(ARBS_H_DISPLAY_RESTORE_TASK_W, L"ARBS-H-DisplayRestore") == 0);
+  assert(std::wcscmp(ARBS_H_DISPLAY_RESTORE_TASK_W, L"VibepolloDisplayRestore") != 0);
+  assert(std::wcscmp(ARBS_H_DISPLAY_RESTORE_TRIGGER_W, L"VibepolloDisplayHelperLogonTrigger") != 0);
   using namespace display_helper;
   IRegisteredTask task;
   ITaskFolder folder {0, &task};
-  auto probe = [&] { return read_restore_task_state(&folder, L"VibepolloDisplayRestore"); };
+  auto probe = [&] { return read_restore_task_state(&folder, ARBS_H_DISPLAY_RESTORE_TASK_W); };
   assert(probe() == restore_task_state_e::enabled);
   assert(can_manage_restore_task(probe()));
   // A user-disabled task remains opted out across both registration and cleanup.

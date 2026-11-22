@@ -140,7 +140,7 @@ namespace system_tray {
     .menu =
       (struct tray_menu[]) {
         // todo - use boost/locale to translate menu strings
-        {.text = "Open Vibepollo", .cb = tray_open_ui_cb},
+        {.text = "Open ARBS-H", .cb = tray_open_ui_cb},
         {.text = "-"},
         // { .text = "-" },
         // { .text = "Donate",
@@ -679,7 +679,7 @@ namespace system_tray {
       started = tray_worker.start([]() {
         tray_set_log_callback(&tray_log_bridge);
         // Only the worker that owns startup may change the live tray menu.
-        static const std::string title = utf8ToAcp("Open Apollo (" + config::nvhttp.sunshine_name + ":" + std::to_string(net::map_port(confighttp::PORT_HTTPS)) + ")");
+        static const std::string title = utf8ToAcp("Open ARBS-H (" + config::nvhttp.sunshine_name + ":" + std::to_string(net::map_port(confighttp::PORT_HTTPS)) + ")");
         tray.menu[0].text = title.c_str();
         if (config::sunshine.hide_tray_controls) {
           tray.menu[1].text = nullptr;
@@ -710,7 +710,7 @@ namespace system_tray {
       return 1;
     }
 
-    static const std::string title_str = "Open Apollo (" + config::nvhttp.sunshine_name + ":" + std::to_string(net::map_port(confighttp::PORT_HTTPS)) + ")";
+    static const std::string title_str = "Open ARBS-H (" + config::nvhttp.sunshine_name + ":" + std::to_string(net::map_port(confighttp::PORT_HTTPS)) + ")";
     tray.menu[0].text = title_str.c_str();
 
     if (config::sunshine.hide_tray_controls) {

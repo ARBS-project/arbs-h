@@ -4,6 +4,8 @@
 #include <vector>
 #include <Windows.h>
 
+#include "arbs_h_names.h"
+
 namespace service_ctrl {
   struct startup_state {
     bool status = false;
@@ -40,7 +42,7 @@ namespace service_ctrl {
           return;
         }
         // This API controls only our installed service, never a client-supplied name.
-        handle = OpenServiceW(manager, L"ApolloService", access);
+        handle = OpenServiceW(manager, ARBS_H_SERVICE_NAME_W, access);
         if (!handle) {
           fail(state, GetLastError());
           return;
@@ -88,7 +90,7 @@ namespace service_ctrl {
   inline startup_state get_service_startup() {
     startup_detail::service service {SERVICE_QUERY_CONFIG};
     if (service.read()) {
-      auto change = OpenServiceW(service.manager, L"ApolloService", SERVICE_CHANGE_CONFIG);
+      auto change = OpenServiceW(service.manager, ARBS_H_SERVICE_NAME_W, SERVICE_CHANGE_CONFIG);
       service.state.can_change = change != nullptr;
       if (change) {
         CloseServiceHandle(change);

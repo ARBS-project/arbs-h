@@ -9,15 +9,34 @@ import {
   dismissedUpdate,
   type UpdateRelease,
 } from '../utils/updates.ts';
+import {
+  RELEASES_API,
+  RELEASES_PAGE,
+  isReleasePageUrl,
+  windowsSetupAsset,
+} from '../utils/repo.ts';
+
+// ARBS-H R1a: the Windows installer name depends on the tag (arbs-h-<version>-setup.exe).
+// Fixtures carry a placeholder that is filled in for the tag right before selection.
+const SETUP = '@windows-setup@';
+function fixAssets(r: UpdateRelease): UpdateRelease {
+  if (!r || typeof r !== 'object' || !Array.isArray(r.assets) || typeof r.tag_name !== 'string') return r;
+  const tag = r.tag_name;
+  return { ...r, assets: r.assets.map((a) => (a.name === SETUP ? { ...a, name: windowsSetupAsset(tag) } : a)) };
+}
+function selectWire(...args: Parameters<typeof selectWireUpdate>) {
+  args[1] = args[1].map(fixAssets);
+  return selectWireUpdate(...args);
+}
 
 // Convert semantic-order fixtures to the release API wire contract.
 function selectAvailableUpdate(...args: Parameters<typeof selectWireUpdate>) {
   args[1] = args[1].map((r) => r.nightly_metadata
     ? { ...r, body: `<!-- nightly-identity: ${JSON.stringify(r.nightly_metadata)} -->\n` } : r);
-  return selectWireUpdate(...args);
+  return selectWire(...args);
 }
 
-const assets = [{ name: 'VibepolloSetup.exe', state: 'uploaded', size: 100 }];
+const assets = [{ name: SETUP, state: 'uploaded', size: 100 }];
 function release(tag: string, prerelease = false): UpdateRelease {
   return { tag_name: tag, draft: false, prerelease, assets };
 }
@@ -110,7 +129,7 @@ test('daily identity uses version family, sequence and verified source, stable s
 test('published versioned setup and Arch package names retain stable notifications', () => {
   const current = {
     ...release('2.0.0'),
-    assets: [{ name: 'VibepolloSetup-v2.0.0.exe', state: 'uploaded', size: 100 }],
+    assets: [{ name: 'arbs-h-2.0.0-setup.exe', state: 'uploaded', size: 100 }],
   };
   assert.equal(selectAvailableUpdate('1.18.4-stable.4', [current], false)?.tag, '2.0.0');
   const arch = {
@@ -128,7 +147,7 @@ test('draft, incomplete, malformed and incompatible packages never notify', () =
       '1.0.0',
       [
         incomplete,
-        { ...release('4.0.0'), assets: [{ name: 'VibepolloSetup.exe', state: 'new', size: 0 }] },
+        { ...release('4.0.0'), assets: [{ name: 'arbs-h-4.0.0-setup.exe', state: 'new', size: 0 }] },
         { tag_name: '5.0.0' },
         release('junk'),
       ],
@@ -273,11 +292,13 @@ test('daily availability uses only release API requests and embedded validated i
     const releases = await fetchUpdateReleases(new AbortController().signal);
     assert.equal(calls.length, 1);
     assert.match(calls[0]!, /^https:\/\/api.github.com\/repos\//);
-    assert.equal(selectWireUpdate('2.0.0', releases, true)?.tag, next.tag_name);
-    assert.equal(selectWireUpdate('2.0.0', releases, false), null);
-    assert.equal(selectWireUpdate('2.0.1', releases, true), null);
-    assert.equal(selectWireUpdate('2.0.0', [{...next, body: next.body + next.body}], true), null);
-    assert.equal(selectWireUpdate('2.0.0', [{...next, body: ''}], true), null);
+    assert.ok(calls[0]!.startsWith(`${RELEASES_API}?`));
+    assert.ok(calls[0]!.startsWith('https://api.github.com/repos/arbs-project/arbs-h/releases?'));
+    assert.equal(selectWire('2.0.0', releases, true)?.tag, next.tag_name);
+    assert.equal(selectWire('2.0.0', releases, false), null);
+    assert.equal(selectWire('2.0.1', releases, true), null);
+    assert.equal(selectWire('2.0.0', [{...next, body: next.body + next.body}], true), null);
+    assert.equal(selectWire('2.0.0', [{...next, body: ''}], true), null);
   } finally { globalThis.fetch = previous; }
 });
 
@@ -311,16 +332,52 @@ test('revised nightly UI qualification requires metadata, checksums, exact sourc
   const first = revisedNightly('2026-10-22', 1);
   assert.equal(validNightlyMetadata(first.tag_name!, first.nightly_metadata), true);
   const wire = {...first, body: `<!-- nightly-identity: ${JSON.stringify(first.nightly_metadata)} -->\n`};
-  assert.equal(selectWireUpdate('2.0.0', [wire], true)?.tag, first.tag_name);
-  assert.equal(selectWireUpdate('2.0.0', [{...wire, body: ''}], true), null);
-  assert.equal(selectWireUpdate('2.0.0', [{...wire, assets: assets}], true), null);
+  assert.equal(selectWire('2.0.0', [wire], true)?.tag, first.tag_name);
+  assert.equal(selectWire('2.0.0', [{...wire, body: ''}], true), null);
+  assert.equal(selectWire('2.0.0', [{...wire, assets: assets}], true), null);
   for (const changed of [{source_commit:'c'.repeat(40)}, {nightly_sequence:20261022}, {version:'2.0.1'}]) {
     const metadata = {...first.nightly_metadata, ...changed};
     assert.equal(validNightlyMetadata(first.tag_name!, metadata), false);
-    assert.equal(selectWireUpdate('2.0.0', [{...wire, body:`<!-- nightly-identity: ${JSON.stringify(metadata)} -->\n`}], true), null);
+    assert.equal(selectWire('2.0.0', [{...wire, body:`<!-- nightly-identity: ${JSON.stringify(metadata)} -->\n`}], true), null);
   }
   for (const invalid of [revisedNightly('2026-02-30',1), revisedNightly('2026-10-22',0), revisedNightly('2026-10-22',1000)]) {
     assert.equal(validNightlyMetadata(invalid.tag_name!, invalid.nightly_metadata), false);
     assert.equal(selectAvailableUpdate('2.0.0', [invalid], true), null);
   }
+});
+
+test('ARBS-H R1a: only arbs-h-<version>-setup.exe of the same tag notifies on Windows', () => {
+  assert.equal(windowsSetupAsset('v0.2.0'), 'arbs-h-0.2.0-setup.exe');
+  assert.equal(windowsSetupAsset('0.2.0'), 'arbs-h-0.2.0-setup.exe');
+  const withAsset = (tag: string, name: string): UpdateRelease => ({
+    tag_name: tag, draft: false, prerelease: false, assets: [{ name, state: 'uploaded', size: 100 }],
+  });
+  assert.equal(selectWireUpdate('0.1.0', [withAsset('v0.2.0', 'arbs-h-0.2.0-setup.exe')], false)?.tag, '0.2.0');
+  for (const name of ['VibepolloSetup.exe', 'VibepolloSetup-v0.2.0.exe', 'VibepolloSetup-0.2.0.exe',
+    'arbs-h-0.1.9-setup.exe', 'arbs-h-v0.2.0-setup.exe', 'ARBS-H-0.2.0-setup.exe', 'arbs-h-0.2.0-portable.zip'])
+    assert.equal(selectWireUpdate('0.1.0', [withAsset('v0.2.0', name)], false), null, name);
+  // A higher-numbered Vibepollo release must never be offered to ARBS-H.
+  assert.equal(selectWireUpdate('0.1.0', [withAsset('v2.20.0', 'VibepolloSetup.exe')], true), null);
+});
+test('ARBS-H R1a: release links point to arbs-project/arbs-h, organization case-insensitive', () => {
+  assert.equal(RELEASES_PAGE, 'https://github.com/arbs-project/arbs-h/releases');
+  assert.equal(RELEASES_API, 'https://api.github.com/repos/arbs-project/arbs-h/releases');
+  assert.equal(isReleasePageUrl('https://github.com/arbs-project/arbs-h/releases/tag/v0.1.0'), true);
+  assert.equal(isReleasePageUrl('https://github.com/ARBS-project/arbs-h/releases/tag/v0.1.0'), true);
+  assert.equal(isReleasePageUrl('https://github.com/Nonary/Vibepollo/releases/tag/v2.20.0'), false);
+  assert.equal(isReleasePageUrl('https://github.com/arbs-project/arbs-h/releases'), false);
+  assert.equal(isReleasePageUrl('https://github.com/arbs-project/arbs-h-evil/releases/tag/x'), false);
+  assert.equal(isReleasePageUrl(undefined), false);
+});
+test('ARBS-H R1a: dismissed updates use the arbs-h key, not the Vibepollo key', () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => void values.set(key, value),
+  };
+  values.set('vibepollo-dismissed-updates', JSON.stringify(['v0.2.0']));
+  assert.equal(dismissedUpdate(storage, 'v0.2.0'), false);
+  dismissUpdate(storage, 'v0.2.0');
+  assert.deepEqual([...values.keys()].sort(), ['arbs-h-dismissed-updates', 'vibepollo-dismissed-updates']);
+  assert.equal(dismissedUpdate(storage, 'v0.2.0'), true);
 });

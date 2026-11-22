@@ -1277,7 +1277,7 @@ export const settingsDefaults: Record<string, unknown> = {
   wan_encryption_mode: 1,
   csrf_allowed_origins: '',
   system_tray: true,
-  notify_pre_releases: true,
+  notify_pre_releases: false, // ARBS-H R1a (D-R1a-11): off by default
   min_log_level: 2,
   global_prep_cmd: [],
   session_history_enabled: true,

@@ -5,6 +5,7 @@ import {
   type ChangelogEntry,
   type GitHubReleaseLike,
 } from './changelog.ts';
+import { RELEASES_API, windowsSetupAsset } from './repo.ts';
 
 export interface UpdateRelease extends GitHubReleaseLike {
   assets?: { name?: string; state?: string; size?: number }[];
@@ -128,10 +129,8 @@ export function completeRelease(
     return false;
   const packageAvailable =
     platform === 'windows'
-      ? asset(release, 'VibepolloSetup.exe') ||
-        (!isDailyTag(release.tag_name) &&
-          (asset(release, `VibepolloSetup-v${release.tag_name.replace(/^v/, '')}.exe`) ||
-            asset(release, `VibepolloSetup-${release.tag_name.replace(/^v/, '')}.exe`)))
+      ? // ARBS-H R1a (D-R1a-11): only arbs-h-<version>-setup.exe of this tag; never VibepolloSetup*.exe.
+        asset(release, windowsSetupAsset(release.tag_name))
       : platform === 'macos'
         ? architecture === 'aarch64'
           ? asset(release, 'Vibepollo-macOS-arm64.dmg')
@@ -234,7 +233,7 @@ export async function fetchUpdateReleases(
   let complete = false;
   for (let page = 1; page <= 10; page++) {
     const response = await fetch(
-      `https://api.github.com/repos/Nonary/Vibepollo/releases?per_page=100&page=${page}`,
+      `${RELEASES_API}?per_page=100&page=${page}`,
       { headers: { Accept: 'application/vnd.github+json' }, credentials: 'omit', signal },
     );
     if (!response.ok) throw new Error('releases-unavailable');
@@ -252,7 +251,8 @@ export async function fetchUpdateReleases(
   return releases;
 }
 
-const dismissedKey = 'vibepollo-dismissed-updates';
+// ARBS-H R1a: own key (same origin localhost:47990 as Vibepollo, so keep the lists apart).
+const dismissedKey = 'arbs-h-dismissed-updates';
 export function dismissedUpdate(storage: Pick<Storage, 'getItem'>, tag: string): boolean {
   try {
     const tags: unknown = JSON.parse(storage.getItem(dismissedKey) ?? '[]');

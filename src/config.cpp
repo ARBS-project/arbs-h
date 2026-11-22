@@ -1124,7 +1124,7 @@ namespace config {
     "ipv4",  // Address family
     {},  // Bind address
     (platf::appdata() / default_log_filename).string(),  // log file
-    true,  // notify_pre_releases
+    false,  // notify_pre_releases: ARBS-H R1a (D-R1a-11) off by default
     false,  // legacy_ordering
     true,  // system_tray
     {},  // prep commands
@@ -1132,7 +1132,11 @@ namespace config {
     {},  // server commands
     std::chrono::hours {2},  // session_token_ttl default 2h
     std::chrono::hours {24 * 7},  // remember_me_refresh_token_ttl default 7d
+#ifdef ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS
+    ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS,  // update_check_interval_seconds: ARBS-H R1a, 0 = dev build, installer build 86400
+#else
     0,  // update_check_interval_seconds: ARBS-H development build default off (code kept)
+#endif
     true,  // session_history_enabled
     0,  // session_history_ttl_days (disabled by default)
     0  // session_history_db_size_limit_mb (disabled by default)

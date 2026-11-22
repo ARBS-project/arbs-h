@@ -32,6 +32,7 @@
   #include <shlobj.h>
   #include <shellapi.h>
 
+  #include "src/platform/windows/arbs_h_names.h"
   #include "src/platform/windows/display_restore_policy.h"
 
   #include "src/platform/windows/ipc/misc_utils.h"
@@ -249,7 +250,7 @@ namespace display_helper_paths {
     HKEY key = nullptr;
     const LSTATUS status = RegCreateKeyExW(
       HKEY_LOCAL_MACHINE,
-      L"SOFTWARE\\Nonary\\Vibepollo\\DisplayHelper",
+      ARBS_H_DISPLAY_HELPER_KEY_W,  // ARBS-H R1a (D-R1a-3)
       0,
       nullptr,
       REG_OPTION_NON_VOLATILE,

@@ -4,9 +4,10 @@ cmake_minimum_required(VERSION 3.20)
 # `cmake_path(CONVERT ... TO_NATIVE_PATH_LIST ...)` requires 3.20
 # todo - set this conditionally
 
-project(Vibepollo VERSION 0.0.0
+# ARBS-H R1a (D-R1a-2/5, analysis/R1a.md 1-1 #10-12): own product name, separate from Vibepollo.
+project(ARBS-H VERSION 0.0.0
         DESCRIPTION "Self-hosted game stream host for Moonlight"
-        HOMEPAGE_URL "https://github.com/Nonary/Vibepollo")
+        HOMEPAGE_URL "https://github.com/arbs-project/arbs-h")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,8 +18,8 @@ endif()
 
 set(PROJECT_LICENSE "GPL-3.0-only")
 
-set(PROJECT_FQDN "io.github.Nonary.vibepollo")
-set(WINDOWS_APP_USER_MODEL_ID "Nonary.Vibepollo")
+set(PROJECT_FQDN "io.github.arbs-project.arbs-h")
+set(WINDOWS_APP_USER_MODEL_ID "ARBS.ARBS-H")
 
 set(PROJECT_BRIEF_DESCRIPTION "GameStream host for Artemis")  # must be <= 35 characters
 
