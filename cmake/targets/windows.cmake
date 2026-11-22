@@ -1,4 +1,9 @@
 # windows specific target definitions
+# ARBS-H R0 (D-R0-12): the legacy process-local DualSense haptics tools (launcher exe + MinHook audio hook dll) are
+# not used by ARBS-H (the USB/IP VHF path uses src/platform/windows/dualsense_haptics.cpp). Off by default: no
+# targets, tests, install or portable entries. -DARBS_H_LEGACY_HAPTICS_TOOLS=ON restores the upstream behaviour.
+option(ARBS_H_LEGACY_HAPTICS_TOOLS "Build and package vibepollo_dualsense_haptics.exe/vibepollo_dualsense_audio.dll" OFF)
+if(ARBS_H_LEGACY_HAPTICS_TOOLS)
 add_executable(vibepollo_dualsense_haptics "${CMAKE_SOURCE_DIR}/tools/dualsense_haptics/launcher.cpp")
 add_library(vibepollo_dualsense_audio SHARED "${CMAKE_SOURCE_DIR}/tools/dualsense_haptics/audio_hook.cpp")
 foreach(_haptics_target IN ITEMS vibepollo_dualsense_haptics vibepollo_dualsense_audio)
@@ -43,6 +48,7 @@ if(BUILD_TESTS AND CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|amd64|x86_64")
     add_test(NAME windows_dualsense_audio COMMAND test_windows_dualsense_audio)
     set_tests_properties(windows_dualsense_audio PROPERTIES TIMEOUT 60)
 endif()
+endif()  # ARBS_H_LEGACY_HAPTICS_TOOLS
 set_target_properties(sunshine PROPERTIES LINK_SEARCH_START_STATIC 1)
 set(CMAKE_FIND_LIBRARY_SUFFIXES ".dll")
 
@@ -157,7 +163,9 @@ add_custom_command(
 add_custom_target(build_uninstall_ui ALL DEPENDS "${SUNSHINE_UNINSTALL_UI_EXE}")
 
 set(SUNSHINE_WINDOWS_PACKAGED_TARGETS sunshine)
-list(APPEND SUNSHINE_WINDOWS_PACKAGED_TARGETS vibepollo_dualsense_haptics vibepollo_dualsense_audio)
+if(ARBS_H_LEGACY_HAPTICS_TOOLS)
+    list(APPEND SUNSHINE_WINDOWS_PACKAGED_TARGETS vibepollo_dualsense_haptics vibepollo_dualsense_audio)
+endif()
 foreach(_packaged_target IN ITEMS
         dxgi-info
         audio-info

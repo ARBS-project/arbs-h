@@ -96,8 +96,11 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 # - Playnite launcher helper used for Playnite-managed app launches
 # - WGC capture helper used by the WGC display backend
 # - Display helper used for applying/reverting display settings
-install(TARGETS vibepollo_dualsense_haptics vibepollo_dualsense_audio
-        RUNTIME DESTINATION "tools" LIBRARY DESTINATION "tools" COMPONENT application)
+# ARBS-H R0 (D-R0-12): legacy haptics tools only when ARBS_H_LEGACY_HAPTICS_TOOLS=ON
+if(TARGET vibepollo_dualsense_haptics)
+    install(TARGETS vibepollo_dualsense_haptics vibepollo_dualsense_audio
+            RUNTIME DESTINATION "tools" LIBRARY DESTINATION "tools" COMPONENT application)
+endif()
 if(DEFINED _MINHOOK_DLL)
     install(FILES "${_MINHOOK_DLL}" DESTINATION "tools" COMPONENT application)
 endif()

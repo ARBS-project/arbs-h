@@ -7,7 +7,11 @@ foreach(_portable_target IN ITEMS playnite-launcher sunshine_wgc_capture sunshin
     endif()
 endforeach()
 
-set(SUNSHINE_PORTABLE_LIBRARIES tools/vibepollo_dualsense_audio.dll)
+set(SUNSHINE_PORTABLE_LIBRARIES)
+# ARBS-H R0 (D-R0-12): legacy audio hook dll only when ARBS_H_LEGACY_HAPTICS_TOOLS=ON
+if(TARGET vibepollo_dualsense_audio)
+    list(APPEND SUNSHINE_PORTABLE_LIBRARIES tools/vibepollo_dualsense_audio.dll)
+endif()
 set(_portable_runtime_files "${ZLIB}" ${SUNSHINE_TRUEHDR_RUNTIME_FILES})
 if(WEBRTC_RUNTIME_DLL)
     list(APPEND _portable_runtime_files "${WEBRTC_RUNTIME_DLL}")

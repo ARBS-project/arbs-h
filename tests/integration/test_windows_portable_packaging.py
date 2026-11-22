@@ -75,9 +75,10 @@ int main(void) { return zlib1_fixture() + libwebrtc_fixture() + zero_filled_fixt
         shutil.copyfile(payload / "sunshine.exe", payload / "uninstall.exe")
         tools = payload / "tools"
         tools.mkdir()
-        for tool in ("dxgi-info", "audio-info", "playnite-launcher", "sunshine_wgc_capture", "sunshine_display_helper", "vibepollo_dualsense_haptics"):
+        # ARBS-H R0 (D-R0-12): the legacy vibepollo_dualsense_haptics.exe/vibepollo_dualsense_audio.dll tools are not
+        # built by default (ARBS_H_LEGACY_HAPTICS_TOOLS=OFF) and must not be part of the portable archive.
+        for tool in ("dxgi-info", "audio-info", "playnite-launcher", "sunshine_wgc_capture", "sunshine_display_helper"):
             shutil.copyfile(payload / "sunshine.exe", tools / f"{tool}.exe")
-        shutil.copyfile(payload / "zlib1.dll", tools / "vibepollo_dualsense_audio.dll")
         assets = {
             "assets/apps.json": '{"apps": [{"name": "Desktop"}]}',
             "assets/desktop.png": "fixture image",
@@ -117,7 +118,7 @@ set(CPACK_PROJECT_CONFIG_FILE "{cmake_path(repository)}/packaging/windows/wix/ge
 set(ZLIB "{cmake_path(payload)}/zlib1.dll")
 set(WEBRTC_RUNTIME_DLL "{cmake_path(payload)}/libwebrtc.dll")
 set(SUNSHINE_TRUEHDR_RUNTIME_FILES "{cmake_path(payload)}/vibeshine_truehdr.dll;{cmake_path(payload)}/nvngx_truehdr.dll")
-foreach(tool IN ITEMS playnite-launcher sunshine_wgc_capture sunshine_display_helper vibepollo_dualsense_haptics)
+foreach(tool IN ITEMS playnite-launcher sunshine_wgc_capture sunshine_display_helper)
     add_custom_target(${{tool}})
 endforeach()
 install(DIRECTORY "{cmake_path(payload)}/" DESTINATION .)
@@ -137,11 +138,12 @@ include(CPack)
                 for required in ("sunshine.exe", "zlib1.dll", "libwebrtc.dll", "vcruntime140.dll", "vcruntime140_1.dll",
                                  "vibeshine_truehdr.dll", "nvngx_truehdr.dll",
                                  "tools/sunshine_display_helper.exe", "tools/sunshine_wgc_capture.exe",
-                                 "tools/playnite-launcher.exe", "tools/vibepollo_dualsense_haptics.exe",
-                                 "tools/vibepollo_dualsense_audio.dll", *assets,
+                                 "tools/playnite-launcher.exe", *assets,
                                  "start-portable.cmd", "README-portable.txt", "config/sunshine.conf"):
                     assert required in contents, required
                 assert "uninstall.exe" not in contents, "MSI uninstaller must not ship in a portable ZIP"
+                for legacy in ("tools/vibepollo_dualsense_haptics.exe", "tools/vibepollo_dualsense_audio.dll"):
+                    assert legacy not in contents, legacy + " must not ship (ARBS_H_LEGACY_HAPTICS_TOOLS=OFF)"
                 config = zipped.read(prefix + "config/sunshine.conf").decode()
                 settings = dict(line.split(" = ", 1) for line in config.splitlines() if " = " in line)
                 assert settings == {"virtual_display_mode": "disabled", "dd_configuration_option": "disabled",
@@ -232,7 +234,6 @@ include(CPack)
             (payload / "sunshine.exe", wrong_exe),
             (payload / "tools/sunshine_wgc_capture.exe", wrong_exe),
             (payload / "zlib1.dll", wrong_dll),
-            (payload / "tools/vibepollo_dualsense_audio.dll", wrong_dll),
             (redist / "vcruntime140_1.dll", wrong_dll),
         ):
             backup = image.read_bytes()
@@ -241,7 +242,7 @@ include(CPack)
                 run(package, success=False, contains="Portable PE architecture mismatch")
             finally:
                 image.write_bytes(backup)
-        print("PASS: wrong-machine host, helper, dlopened DLL, audio DLL and transitive redist CRT reject production CPack")
+        print("PASS: wrong-machine host, helper, dlopened DLL and transitive redist CRT reject production CPack")
         image = payload / "sunshine.exe"
         original = image.read_bytes()
         pe = int.from_bytes(original[0x3c:0x40], "little")
@@ -361,7 +362,6 @@ include(CPack)
 
         missing("zlib1.dll", "Required portable runtime file missing: zlib1.dll")
         missing("tools/sunshine_wgc_capture.exe", "Required portable runtime file missing: tools/sunshine_wgc_capture.exe")
-        missing("tools/vibepollo_dualsense_audio.dll", "Required portable runtime file missing: tools/vibepollo_dualsense_audio.dll")
         missing("plugins/playnite/SunshinePlaynite/VibepolloPlaynite.dll", "Required portable runtime file missing")
         missing("assets/web/v2/assets/v2.js", "Portable Web UI bundle missing")
         crt = redist / "vcruntime140_1.dll"
