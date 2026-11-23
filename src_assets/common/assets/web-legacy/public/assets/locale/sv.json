@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "Kan inte avgöra commit-avståndet till senaste version.",
     "version_branch": "Gren: {branch} (commit {commit})",
     "view_logs": "Öppna Felsökning - loggar",
-    "welcome": "Hej, Vibepollo!",
+    "welcome": "Hej, ARBS-H!",
     "fix_now": "Fixa nu",
     "vigembus_not_installed_desc": "Stöd för virtuella spel fungerar inte utan ViGEmBus-drivrutinen. Klicka på knappen nedan för att installera det.",
     "vigembus_not_installed_title": "ViGEmBus drivrutin inte installerad",

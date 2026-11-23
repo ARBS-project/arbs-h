@@ -1042,7 +1042,7 @@
     "dd_manual_enforcement_notice": "Le sostituzioni riportate di seguito sono disabilitate quando viene imposta una risoluzione o una frequenza di aggiornamento manuale. Le frequenze manuali vengono applicate forzatamente e sostituiscono il cambio di frequenza basato sul gioco sui display virtuali."
   },
   "index": {
-    "description": "Vibepollo è una piattaforma autonoma di game stream per Moonlight.",
+    "description": "ARBS-H è una piattaforma autonoma di game stream per Moonlight.",
     "download": "Download",
     "view_notes": "Note sulla versione",
     "hide_notes": "Nascondi note",
@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "Impossibile determinare la distanza di commit dall'ultima versione.",
     "version_branch": "Ramo: {branch} (impegno {commit})",
     "view_logs": "Apri Risoluzione dei problemi — Log",
-    "welcome": "Ciao, Vibepollo!",
+    "welcome": "Ciao, ARBS-H!",
     "fix_now": "Correggi Ora",
     "vigembus_not_installed_desc": "Il supporto al gamepad virtuale non funzionerà senza il driver ViGEmBus. Fare clic sul pulsante qui sotto per installarlo.",
     "vigembus_not_installed_title": "Driver ViGEmBus Non Installato",

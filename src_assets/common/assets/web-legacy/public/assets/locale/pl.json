@@ -1042,7 +1042,7 @@
     "dd_manual_enforcement_notice": "Poniższe nadpisania są wyłączone, gdy wymuszona jest ręczna rozdzielczość lub częstotliwość odświeżania. Ręczne częstotliwości odświeżania są stosowane wymuszenie i zastępują zależne od gry przełączanie odświeżania na ekranach wirtualnych."
   },
   "index": {
-    "description": "Vibepollo jest samodzielnym hostem strumienia gry dla Moonlight.",
+    "description": "ARBS-H jest samodzielnym hostem strumienia gry dla Moonlight.",
     "download": "Pobierz",
     "view_notes": "Informacje o wydaniu",
     "hide_notes": "Ukryj informacje",
@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "Nie można określić odległości commitów od najnowszego wydania.",
     "version_branch": "Gałąź: {branch} (commit {commit})",
     "view_logs": "Otwórz Rozwiązywanie problemów — Dzienniki",
-    "welcome": "Witaj, Vibepollo!",
+    "welcome": "Witaj, ARBS-H!",
     "fix_now": "Napraw teraz",
     "vigembus_not_installed_desc": "Wirtualna obsługa gamepad nie będzie działać bez sterownika ViGEmBus. Kliknij poniższy przycisk, aby go zainstalować.",
     "vigembus_not_installed_title": "Kierowca ViGEmBus nie jest zainstalowany",

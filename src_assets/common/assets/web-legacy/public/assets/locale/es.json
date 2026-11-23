@@ -1042,7 +1042,7 @@
     "dd_manual_enforcement_notice": "Las anulaciones siguientes están deshabilitadas mientras se fuerce una resolución o frecuencia de actualización manual. Las frecuencias de actualización manuales se aplican de forma forzada y prevalecen sobre el cambio de frecuencia según el juego en pantallas virtuales."
   },
   "index": {
-    "description": "Vibepollo es un servidor de transmisión de juego autoalojado para Moonlight.",
+    "description": "ARBS-H es un servidor de transmisión de juego autoalojado para Moonlight.",
     "download": "Descargar",
     "view_notes": "Notas de la versión",
     "hide_notes": "Ocultar notas",
@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "No se puede determinar la distancia de confirmación hasta la última versión.",
     "version_branch": "Rama: {branch} (comprometer {commit})",
     "view_logs": "Abrir Resolución de problemas — Registros",
-    "welcome": "¡Hola, Vibepollo!",
+    "welcome": "¡Hola, ARBS-H!",
     "fix_now": "Arreglar Ahora",
     "vigembus_not_installed_desc": "El soporte para gamepad virtual no funcionará sin el controlador ViGEmBus. Haga clic en el botón de abajo para instalarlo.",
     "vigembus_not_installed_title": "Controlador ViGEmBus no instalado",

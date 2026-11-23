@@ -39,4 +39,12 @@ namespace logging::policy {
     line.append(record.message.data(), record.message.size());
     return line;
   }
+
+  bool should_rotate_log(bool exists, const std::error_code &ec, std::ostream &diagnostics) {
+    if (ec) {
+      diagnostics << "Skipping log rotation, could not check the log file: " << ec.message() << " (code " << ec.category().name() << ':' << ec.value() << ')' << std::endl;
+      return false;
+    }
+    return exists;
+  }
 }  // namespace logging::policy

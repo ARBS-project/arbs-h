@@ -1042,7 +1042,7 @@
     "dd_manual_enforcement_notice": "As substituições abaixo ficam desativadas enquanto uma resolução ou taxa de atualização manual estiver sendo forçada. As taxas manuais são aplicadas à força e substituem a mudança de taxa baseada no jogo em telas virtuais."
   },
   "index": {
-    "description": "O Vibepollo é um host de fluxo de jogos auto-hospedado para o Moonlight.",
+    "description": "O ARBS-H é um host de fluxo de jogos auto-hospedado para o Moonlight.",
     "download": "Baixar",
     "view_notes": "Notas da versão",
     "hide_notes": "Ocultar notas",
@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "Não foi possível determinar a distância de commits até a versão mais recente.",
     "version_branch": "Branch: {branch} (commit {commit})",
     "view_logs": "Abrir Solução de problemas — Logs",
-    "welcome": "Olá, Vibepollo!",
+    "welcome": "Olá, ARBS-H!",
     "fix_now": "Corrigir agora",
     "vigembus_not_installed_desc": "O suporte ao gamepad virtual não funcionará sem o driver do ViGEmBus. Clique no botão abaixo para instalá-lo.",
     "vigembus_not_installed_title": "Driver ViGEmBus não instalado",

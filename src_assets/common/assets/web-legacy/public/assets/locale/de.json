@@ -1042,7 +1042,7 @@
     "dd_manual_enforcement_notice": "Die unten aufgeführten Überschreibungen sind deaktiviert, solange eine manuelle Auflösung oder Bildwiederholrate erzwungen wird. Manuelle Bildwiederholraten werden erzwungen angewendet und überschreiben die spielabhängige Umschaltung der Bildwiederholrate auf virtuellen Bildschirmen."
   },
   "index": {
-    "description": "Vibepollo ist ein selbst gehosteter Game-Stream-Host für Moonlight.",
+    "description": "ARBS-H ist ein selbst gehosteter Game-Stream-Host für Moonlight.",
     "download": "Herunterladen",
     "view_notes": "Versionshinweise",
     "hide_notes": "Hinweise ausblenden",
@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "Commit-Abstand zur neuesten Veröffentlichung konnte nicht bestimmt werden.",
     "version_branch": "Branch: {branch} (Commit {commit})",
     "view_logs": "Fehlerbehebung — Protokolle öffnen",
-    "welcome": "Hallo, Vibepollo!",
+    "welcome": "Hallo, ARBS-H!",
     "fix_now": "Jetzt reparieren",
     "vigembus_not_installed_desc": "Virtuelle Gamepad-Unterstützung funktioniert nicht ohne den ViGEmBus-Treiber. Klicken Sie auf den Button unten, um ihn zu installieren.",
     "vigembus_not_installed_title": "ViGEmBus-Treiber nicht installiert",

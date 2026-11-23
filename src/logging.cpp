@@ -489,7 +489,10 @@ namespace logging {
 
     // Check if the log file exists and handle backup
     std::string backup_log_file = log_file + ".backup";
-    if (std::filesystem::exists(log_file)) {
+    // ARBS-H R1b (D-R1b-11): this runs before any handler exists, so the check must not throw.
+    std::error_code log_exists_ec;
+    const bool log_exists = std::filesystem::exists(log_file, log_exists_ec);
+    if (logging::policy::should_rotate_log(log_exists, log_exists_ec, std::cerr)) {
       try {
         // If the backup file exists, remove it
         if (std::filesystem::exists(backup_log_file)) {

@@ -23,7 +23,7 @@ param(
   [string]$AppDir = (Join-Path $env:ProgramFiles 'ARBS-H'),
   [string]$DataRoot = (Join-Path $env:ProgramData 'ARBS-H'),
   [string]$VibepolloConfig = '',
-  [string]$Version = '0.1.1',
+  [string]$Version = '0.1.2',
   [string]$PlanOut = '',
   [string]$ResultOut = '',
   [string]$OutDir = '',

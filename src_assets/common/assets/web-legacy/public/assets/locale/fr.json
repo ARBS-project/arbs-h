@@ -1042,7 +1042,7 @@
     "dd_manual_enforcement_notice": "Les substitutions ci-dessous sont désactivées lorsqu’une résolution ou une fréquence de rafraîchissement manuelle est imposée. Les fréquences manuelles sont appliquées de force et remplacent le changement de fréquence adapté au jeu sur les écrans virtuels."
   },
   "index": {
-    "description": "Vibepollo est un serveur de streaming auto-hébergé pour Moonlight.",
+    "description": "ARBS-H est un serveur de streaming auto-hébergé pour Moonlight.",
     "download": "Télécharger",
     "view_notes": "Notes de version",
     "hide_notes": "Masquer les notes",
@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "Impossible de déterminer l’écart de commits avec la dernière version.",
     "version_branch": "Branche : {branch} (commit {commit})",
     "view_logs": "Ouvrir le dépannage – Journaux",
-    "welcome": "Bonjour, Vibepollo !",
+    "welcome": "Bonjour, ARBS-H !",
     "fix_now": "Corriger maintenant",
     "vigembus_not_installed_desc": "Le support de la manette virtuelle ne fonctionnera pas sans le pilote ViGEmbus. Cliquez sur le bouton ci-dessous pour l'installer.",
     "vigembus_not_installed_title": "Pilote ViGEmBus non installé",

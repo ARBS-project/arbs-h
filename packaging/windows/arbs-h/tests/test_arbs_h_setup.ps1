@@ -422,7 +422,7 @@ Invoke-Case 'post-install-first' {
   Eq $script:Result['start'] 'auto-started' 'first install: started'
   Eq $script:Result['credentials-acl'] 'ok' 'first install: migrated credentials already private'
   Eq $S.Services.ARBSHService.Start 2 'ARBSHService auto'; Eq $S.Services.ARBSHService.State 'RUNNING' 'ARBSHService running'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.1' 'version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.2' 'version file'
   Ok (-not ((Mutations) -match '^sc\.exe (delete|start) ApolloService|delete rule name="Vibepollo|VibepolloDisplayRestore|^pnputil\.exe /(delete|remove)')) 'Vibepollo service/rules/task/drivers never deleted'
 }
 

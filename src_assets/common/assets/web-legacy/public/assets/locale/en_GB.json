@@ -1048,7 +1048,7 @@
     "dd_manual_enforcement_notice": "Manual values take priority over remapping for that value. Values set to Match the client keep their rules unless a client's Display mode override is active; that override bypasses all remapping and takes priority over manual values."
   },
   "index": {
-    "description": "Vibepollo is a self-hosted game stream host for Moonlight.",
+    "description": "ARBS-H is a self-hosted game stream host for Moonlight.",
     "download": "Download",
     "installed_version_not_stable": "You are running a pre-release version of Vibepollo. You may experience bugs or other issues. Please report any issues you encounter. Thank you for helping to make Vibepollo a better software!",
     "loading_latest": "Loading latest release...",
@@ -1057,7 +1057,7 @@
     "startup_errors": "<b>Attention!</b> Vibepollo detected these errors during startup. We <b>STRONGLY RECOMMEND</b> fixing them before streaming.",
     "version_dirty": "Thank you for helping to make Vibepollo a better software!",
     "version_latest": "You are running the latest version of Vibepollo",
-    "welcome": "Hello, Vibepollo!",
+    "welcome": "Hello, ARBS-H!",
     "fix_now": "Fix Now",
     "vigembus_not_installed_desc": "Virtual gamepad support will not work without the ViGEmBus driver. Click the button below to install it.",
     "vigembus_not_installed_title": "ViGEmBus Driver Not Installed",

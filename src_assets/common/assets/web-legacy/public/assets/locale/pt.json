@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "Não foi possível determinar a distância de commits até à versão mais recente.",
     "version_branch": "Ramo: {branch} (commit {commit})",
     "view_logs": "Abrir Resolução de problemas - Registos",
-    "welcome": "Olá, Vibepollo!",
+    "welcome": "Olá, ARBS-H!",
     "fix_now": "Corrigir agora",
     "vigembus_not_installed_desc": "O suporte ao gamepad virtual não funcionará sem o driver do ViGEmBus. Clique no botão abaixo para instalá-lo.",
     "vigembus_not_installed_title": "Driver ViGEmBus não instalado",

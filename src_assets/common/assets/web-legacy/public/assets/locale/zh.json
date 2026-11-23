@@ -1042,7 +1042,7 @@
     "dd_manual_enforcement_notice": "强制使用手动分辨率或刷新率时，以下覆盖设置将被禁用。手动刷新率会被强制应用，并覆盖虚拟显示器上根据游戏切换刷新率的行为。"
   },
   "index": {
-    "description": "Vibepollo 是供 Moonlight 使用的自建游戏串流服务。",
+    "description": "ARBS-H 是供 Moonlight 使用的自建游戏串流服务。",
     "download": "下载",
     "view_notes": "发行说明",
     "hide_notes": "隐藏发行说明",
@@ -1058,7 +1058,7 @@
     "version_compare_unknown": "无法确定与最新版本的提交差距。",
     "version_branch": "分支：{branch}（提交 {commit}）",
     "view_logs": "打开故障排查：日志",
-    "welcome": "你好，Vibepollo！",
+    "welcome": "你好，ARBS-H！",
     "fix_now": "立即修复",
     "vigembus_not_installed_desc": "ViGEmBus 驱动程序虚拟游戏板支持无法正常工作。点击下面的按钮安装它。",
     "vigembus_not_installed_title": "ViGEmBus 驱动程序未安装",

@@ -363,16 +363,7 @@ int main(int argc, char *argv[]) {
 
   mail::man = std::make_shared<safe::mail_raw_t>();
 
-  // parse config file
-  if (config::parse(argc, argv)) {
-    return 0;
-  }
-
-  auto log_deinit_guard = logging::init(config::sunshine.min_log_level, config::sunshine.log_file);
-  if (!log_deinit_guard) {
-    BOOST_LOG(error) << "Logging failed to initialize"sv;
-  }
-
+  // ARBS-H R1b (D-R1b-11): installed before config::parse so early startup throws are reported too.
   // ARBS-H R1a-fix1 F6: an exception that escapes a thread (or main) used to end the process with only
   // libstdc++'s "terminate called ..." on stderr. Write what() (+ code for system errors) to stderr and
   // the log, flush, then abort as before. Only the first entry logs (a throw inside the handler aborts).
@@ -390,6 +381,16 @@ int main(int argc, char *argv[]) {
     }
     std::abort();
   });
+
+  // parse config file
+  if (config::parse(argc, argv)) {
+    return 0;
+  }
+
+  auto log_deinit_guard = logging::init(config::sunshine.min_log_level, config::sunshine.log_file);
+  if (!log_deinit_guard) {
+    BOOST_LOG(error) << "Logging failed to initialize"sv;
+  }
 
 #ifdef WIN32
   // Own cleanup even for maintenance commands and early startup returns.

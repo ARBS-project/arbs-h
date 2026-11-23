@@ -5,8 +5,10 @@
 #include "../tests_common.h"
 
 #include <array>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <tuple>
 
 #include <src/logging_policy.h>
@@ -44,4 +46,24 @@ TEST_P(LogLevelsTest, PutMessage) {
     logging::policy::format_line(timestamp, record),
     std::string("[") + std::string(timestamp) + "]: " + prefix + std::string(message)
   );
+}
+
+TEST(LogRotationCheck, CheckFailureSkipsRotationAndReports) {
+  std::ostringstream out;
+  EXPECT_FALSE(logging::policy::should_rotate_log(false, std::make_error_code(std::errc::permission_denied), out));
+  EXPECT_NE(out.str().find("Skipping log rotation"), std::string::npos);
+  EXPECT_NE(out.str().find("generic:13"), std::string::npos);
+}
+
+TEST(LogRotationCheck, ErrorWinsOverExistsValue) {
+  std::ostringstream out;
+  EXPECT_FALSE(logging::policy::should_rotate_log(true, std::make_error_code(std::errc::io_error), out));
+  EXPECT_FALSE(out.str().empty());
+}
+
+TEST(LogRotationCheck, NoErrorFollowsExistsWithoutOutput) {
+  std::ostringstream out;
+  EXPECT_TRUE(logging::policy::should_rotate_log(true, {}, out));
+  EXPECT_FALSE(logging::policy::should_rotate_log(false, {}, out));
+  EXPECT_TRUE(out.str().empty());
 }

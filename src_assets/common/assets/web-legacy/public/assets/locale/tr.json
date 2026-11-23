@@ -1042,7 +1042,7 @@
     "dd_manual_enforcement_notice": "El ile ayarlanan bir çözünürlük veya yenileme hızı zorlandığında aşağıdaki geçersiz kılmalar devre dışı bırakılır. El ile ayarlanan yenileme hızları zorla uygulanır ve sanal ekranlarda oyuna göre yenileme hızı geçişini geçersiz kılar."
   },
   "index": {
-    "description": "Vibepollo, Moonlight için kendi kendine barındırılan bir oyun akışı sunucusudur.",
+    "description": "ARBS-H, Moonlight için kendi kendine barındırılan bir oyun akışı sunucusudur.",
     "download": "İndir",
     "view_notes": "Sürüm Notları",
     "hide_notes": "Notları Gizle",

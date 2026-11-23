@@ -2567,8 +2567,11 @@ namespace config {
       // so recovery at next logon does not require a live host/IPC connection.
       statefile::save_display_restore_preference(video.dd.always_restore_from_golden);
     } catch (const std::filesystem::filesystem_error &err) {
+      // ARBS-H R1b (D-R1b-11): logging is not initialized yet; stderr reaches the service log.
+      std::cerr << "Failed to apply config: " << err.what() << std::endl;
       BOOST_LOG(fatal) << "Failed to apply config: "sv << err.what();
     } catch (const boost::filesystem::filesystem_error &err) {
+      std::cerr << "Failed to apply config: " << err.what() << std::endl;
       BOOST_LOG(fatal) << "Failed to apply config: "sv << err.what();
     }
 
