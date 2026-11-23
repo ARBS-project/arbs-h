@@ -88,6 +88,16 @@ $msPl = Join-Path $pkg 'licenses\MS-PL-Windows-driver-samples.txt'
 Ok ((Test-Path -LiteralPath $svNotice) -and [IO.File]::ReadAllText($svNotice).Contains('MIT and CC0 or Public Domain (for changes I made, please consult Microsoft for their license), choose the least restrictive option.')) 'SudoVDA license sentence present'
 Ok ((Test-Path -LiteralPath $msPl) -and (Get-FileHash -LiteralPath $msPl -Algorithm SHA256).Hash.ToLowerInvariant() -eq '07639618c7b94ab9953cc61715f6325877e1854dca611ed9b1bd54497cf5e93a') 'MS-PL text matches the fetched original'
 
+# R1b (D-R1b-19, D-R1b-20): nefcon MIT text and version, SudoVDA binary origin in the notice.
+$nefLic = Join-Path $pkg 'licenses\nefcon-LICENSE.txt'
+Ok ((Test-Path -LiteralPath $nefLic) -and (Get-FileHash -LiteralPath $nefLic -Algorithm SHA256).Hash.ToLowerInvariant() -eq '19be8cb05e2604e7dad1c8970b2605288275abbe8519746bbc6421ed55a9df73') 'nefcon LICENSE matches the fetched original'
+$nefExe = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $StageDir 'drivers\sudovda\nefconc.exe'))
+Ok ($nefExe.ProductName -eq 'nefcon' -and $nefExe.FileVersion -eq '1.14.0.0') "bundled nefconc.exe is nefcon 1.14.0.0 ($($nefExe.ProductName) $($nefExe.FileVersion))"
+$noticeText = [IO.File]::ReadAllText((Join-Path $pkg '..\..\..\NOTICE-ARBS.md'))
+Ok ($noticeText.Contains('https://github.com/nefarius/nefcon') -and $noticeText.Contains('nefcon 1.14.0.0')) 'NOTICE names nefcon source and version'
+Ok ($noticeText.Contains('Vibepollo 2.18.9') -and $noticeText.Contains('source commit of this binary is not confirmed')) 'NOTICE states the SudoVDA binary origin'
+$svSigner = (Get-AuthenticodeSignature -LiteralPath (Join-Path $StageDir 'drivers\sudovda\SudoVDA.dll')).SignerCertificate
+Ok ($null -ne $svSigner -and $svSigner.Thumbprint -eq '3C918FC73525AD8B1521B6DB26B71F694277CC49' -and $noticeText.Contains($svSigner.Thumbprint)) 'SudoVDA signer matches the NOTICE thumbprint'
 Ok (Test-Path -LiteralPath $SetupExe) 'setup.exe exists'
 $shaFile = "$SetupExe.sha256"
 Ok (Test-Path -LiteralPath $shaFile) 'setup.exe.sha256 exists'

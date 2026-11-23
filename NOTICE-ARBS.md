@@ -44,8 +44,17 @@ The installer bundles the SudoVDA virtual display driver (`drivers\sudovda`).
 - Project: https://github.com/SudoMaker/SudoVDA. Its README states the license as "MIT and CC0 or Public Domain" for the
   author's changes and refers to Microsoft for the Microsoft code. The repository has no top-level LICENSE file.
 - Microsoft code it is based on: https://github.com/microsoft/Windows-driver-samples (Microsoft Public License, MS-PL).
+- Binary origin: used unchanged as bundled in Vibepollo 2.18.9 (base commit `c286d086`). Signer: the SudoVDA author, as named
+  by the file signature (self-signed certificate, subject a `sudovda` address at the SudoMaker domain `su.mk`, SHA-1
+  thumbprint `3C918FC73525AD8B1521B6DB26B71F694277CC49`). The source commit of this binary is not confirmed.
 
 The installer carries the exact statement and the full MS-PL text in its `licenses` folder.
+
+## Bundled tool: nefcon
+
+`drivers\sudovda\nefconc.exe` is nefcon 1.14.0.0 by Nefarius Software Solutions e.U., used by the SudoVDA driver install
+script. Source: https://github.com/nefarius/nefcon (release https://github.com/nefarius/nefcon/releases/tag/v1.14.0).
+License: MIT, full text in `licenses\nefcon-LICENSE.txt` in the installer.
 
 ## Obligations when distributing (GPL-3.0)
 
