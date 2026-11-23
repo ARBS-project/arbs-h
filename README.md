@@ -15,7 +15,7 @@ ARBS consists of four repositories in the `arbs-project` organisation:
 
 | Repository | Role |
 |---|---|
-| `arbs` | Project overview, user guide, download notes, license notices, ARBS Core sources |
+| `arbs` | Project overview, install and download guide (README), license notices, ARBS Core sources |
 | `arbs-h` | Host (this repository, fork of Vibepollo 2.18.9) |
 | `arbs-w` | Windows client (fork of moonlight-qt) |
 | `arbs-a` | Android client (fork of moonlight-android) |
@@ -33,8 +33,8 @@ ARBS consists of four repositories in the `arbs-project` organisation:
 - Update check off by default (`update_check_interval` 0) and not run at stream start when disabled.
 - The legacy process-local haptics tools (`vibepollo_dualsense_haptics.exe`, `vibepollo_dualsense_audio.dll`) are not built
   or packaged by default (CMake option `ARBS_H_LEGACY_HAPTICS_TOOLS`, default `OFF`).
-- The ARBS-H build also applies a small patch to the bundled ENet (precise time). That patch and the build scripts will be
-  published in the `arbs` repository (`build/`) before any binary release.
+- The ARBS-H build also applies a small patch to the bundled ENet (precise time). That patch and the build scripts are in
+  the `arbs` repository (`build/`).
 
 The full list of changed files is in [NOTICE-ARBS.md](NOTICE-ARBS.md).
 

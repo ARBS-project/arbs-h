@@ -73,6 +73,8 @@ Source: "{#SrcRoot}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: 
 Source: "{#SrcRoot}\NOTICE"; DestDir: "{app}"; DestName: "NOTICE.txt"; Flags: ignoreversion
 Source: "{#SrcRoot}\NOTICE-ARBS.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SrcRoot}\README.upstream.md"; DestDir: "{app}"; Flags: ignoreversion
+; R1b (R-02): license texts for the bundled SudoVDA driver.
+Source: "licenses\*.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "sunshine.conf"; DestDir: "{app}\config-template"; Flags: ignoreversion
 Source: "arbs-h-setup.ps1"; DestDir: "{app}\tools\arbs-h"; Flags: ignoreversion
 Source: "arbs-h-rollback.ps1"; DestDir: "{app}\tools\arbs-h"; Flags: ignoreversion

@@ -80,6 +80,14 @@ foreach ($s in @('ARBSHService', 'ApolloService')) { Ok ([IO.File]::ReadAllText(
 Ok ($iss -match 'DefaultDirName=\{autopf\}\\ARBS-H') 'install folder Program Files\ARBS-H'
 Ok ($iss -notmatch '(?i)Vibepollo\\|C:\\Vibepollo') 'iss never addresses the Vibepollo folder'
 
+# R1b (R-02): SudoVDA stays bundled, with its license texts in the installer.
+Ok ($iss.Contains('Source: "licenses\*.txt"; DestDir: "{app}\licenses"')) 'installer carries licenses\'
+Ok (Test-Path -LiteralPath (Join-Path $StageDir 'drivers\sudovda\SudoVDA.dll')) 'stage keeps the SudoVDA driver'
+$svNotice = Join-Path $pkg 'licenses\SudoVDA-license-notice.txt'
+$msPl = Join-Path $pkg 'licenses\MS-PL-Windows-driver-samples.txt'
+Ok ((Test-Path -LiteralPath $svNotice) -and [IO.File]::ReadAllText($svNotice).Contains('MIT and CC0 or Public Domain (for changes I made, please consult Microsoft for their license), choose the least restrictive option.')) 'SudoVDA license sentence present'
+Ok ((Test-Path -LiteralPath $msPl) -and (Get-FileHash -LiteralPath $msPl -Algorithm SHA256).Hash.ToLowerInvariant() -eq '07639618c7b94ab9953cc61715f6325877e1854dca611ed9b1bd54497cf5e93a') 'MS-PL text matches the fetched original'
+
 Ok (Test-Path -LiteralPath $SetupExe) 'setup.exe exists'
 $shaFile = "$SetupExe.sha256"
 Ok (Test-Path -LiteralPath $shaFile) 'setup.exe.sha256 exists'

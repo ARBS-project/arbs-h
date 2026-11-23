@@ -35,7 +35,17 @@ ARBS changes are the commits after the base commit (`git log c286d0862..HEAD`). 
 - Publication files: `README.md` (new), `README.upstream.md` (original README), `NOTICE-ARBS.md`, `.gitignore` (ARBS block)
 
 Outside this repository, the ARBS-H build applies a patch to the ENet copy inside the `moonlight-common-c` submodule
-(precise time). The patch and build scripts are to be published in the `arbs` repository before any binary release.
+(precise time). The patch and build scripts are in the `arbs` repository (`build/`).
+
+## Bundled driver: SudoVDA
+
+The installer bundles the SudoVDA virtual display driver (`drivers\sudovda`).
+
+- Project: https://github.com/SudoMaker/SudoVDA. Its README states the license as "MIT and CC0 or Public Domain" for the
+  author's changes and refers to Microsoft for the Microsoft code. The repository has no top-level LICENSE file.
+- Microsoft code it is based on: https://github.com/microsoft/Windows-driver-samples (Microsoft Public License, MS-PL).
+
+The installer carries the exact statement and the full MS-PL text in its `licenses` folder.
 
 ## Obligations when distributing (GPL-3.0)
 

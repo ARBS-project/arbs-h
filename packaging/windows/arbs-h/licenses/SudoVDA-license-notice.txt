@@ -1,0 +1,13 @@
+SudoVDA - license notice for the driver bundled with ARBS-H
+
+Bundled component: drivers\sudovda
+Project: https://github.com/SudoMaker/SudoVDA
+The project has no top-level LICENSE file. Its README "License" section states, verbatim:
+
+    MIT and CC0 or Public Domain (for changes I made, please consult Microsoft for their license), choose the least restrictive option.
+
+Read from: https://raw.githubusercontent.com/SudoMaker/SudoVDA/a4b09fa2aa731a964d0cb5d139cb1e6240e4da12/README.md
+
+Microsoft code the driver is based on: https://github.com/microsoft/Windows-driver-samples
+License: Microsoft Public License (MS-PL), full text in MS-PL-Windows-driver-samples.txt
+Read from: https://raw.githubusercontent.com/microsoft/Windows-driver-samples/d49bb7d72f3651952b2b6e4ad28d14fe2247eb69/LICENSE
