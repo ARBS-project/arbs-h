@@ -52,6 +52,8 @@
 #endif
 #include "display_device.h"
 #include "display_helper_integration.h"
+#include "arbs_startup_errors.h"
+#include "entry_handler.h"
 #include "file_handler.h"
 #include "globals.h"
 #include "hardware_metrics.h"
@@ -7234,7 +7236,17 @@ launch_session->exact_target_hold.reset();
     // launch will store it in host_audio
     bool host_audio {};
 
-    https_server_t https_server {config::nvhttp.cert, config::nvhttp.pkey};
+    // ARBS-H R1a-fix1 F5: same certificate/key load as confighttp; log paths, what() and code (never the
+    // contents) and shut down instead of std::terminate when the files cannot be read.
+    std::string tls_error;
+    auto https_server_owner = arbs::startup_errors::make_tls_server<https_server_t>("nvhttp"sv, config::nvhttp.cert, config::nvhttp.pkey, tls_error);
+    if (!https_server_owner) {
+      BOOST_LOG(fatal) << tls_error;
+      logging::log_flush();
+      lifetime::exit_sunshine(1, true);
+      return;
+    }
+    https_server_t &https_server = *https_server_owner;
     http_server_t http_server;
     thread_pool_util::ThreadPool blocking_route_pool;
     blocking_route_pool.start(1);

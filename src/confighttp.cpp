@@ -46,6 +46,7 @@
   #include <Windows.h>
 #endif
 // local includes
+#include "arbs_startup_errors.h"
 #include "config.h"
 #include "config_http_log_policy.h"
 #include "config_http_login_limiter.h"
@@ -6369,7 +6370,17 @@ namespace confighttp {
     auto port_https = net::map_port(PORT_HTTPS);
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
 
-    https_server_t server(config::nvhttp.cert, config::nvhttp.pkey);
+    // ARBS-H R1a-fix1 F5: the constructor loads the certificate/key files and throws when they cannot be read.
+    // Log the paths, what() and code (never the contents), then shut down instead of std::terminate.
+    std::string tls_error;
+    auto server_owner = arbs::startup_errors::make_tls_server<https_server_t>("confighttp"sv, config::nvhttp.cert, config::nvhttp.pkey, tls_error);
+    if (!server_owner) {
+      BOOST_LOG(fatal) << tls_error;
+      logging::log_flush();
+      lifetime::exit_sunshine(1, true);
+      return;
+    }
+    https_server_t &server = *server_owner;
     configure_https_listener_diagnostics(server, [](std::string_view message) {
       BOOST_LOG(warning) << message;
     });

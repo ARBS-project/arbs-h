@@ -29,7 +29,49 @@ function New-FakeState {
       usbip2_ude    = @{ Start = 3; Delayed = $false; State = 'RUNNING'; Bin = 'System32\drivers\usbip2_ude.sys'; StopWorks = $true }
     }
     Usbip = $true; SudoVda = $true; Ports = @(); Exits = @{}
+    # R1a-fix1: fake ACL model (icacls effects + Get-Acl answers). Keys are lower-case full paths.
+    Acl = @{}; AclStuck = @{}; AclHard = @{}; AclUnreadable = @{}
   }
+}
+$script:SddlInherited = 'O:BAG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)'   # Program Files default
+$script:SddlPrivateDir = 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+$script:SddlPrivateFile = 'O:BAG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)'
+$script:SddlEmpty = 'O:BAG:SYD:PAI'   # what the 0.1.0 /T command left on every credentials file
+function Get-AclKey([string]$Path) { return [IO.Path]::GetFullPath($Path).TrimEnd('\').ToLowerInvariant() }
+# Rename keeps ACLs: config.migrating\... entries answer for config\... as well.
+function Get-FakeSddl($S, [string]$Path) {
+  $k = Get-AclKey $Path
+  if ($S.AclUnreadable.ContainsKey($k)) { throw "fake Get-Acl: access denied $Path" }
+  if ($S.Acl.ContainsKey($k)) { return $S.Acl[$k] }
+  $m = $k -replace '\\config\\', '\config.migrating\'
+  if ($m -ne $k -and $S.Acl.ContainsKey($m)) { return $S.Acl[$m] }
+  if ($k.EndsWith('\config')) { $m = $k + '.migrating'; if ($S.Acl.ContainsKey($m)) { return $S.Acl[$m] } }
+  return $script:SddlInherited
+}
+function Get-FakeChildren([string]$Dir) { @(Get-ChildItem -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { Get-AclKey $_.FullName }) }
+function Invoke-FakeIcacls($S, [string]$Arguments) {
+  if ($Arguments -notmatch '^"([^"]+)"\s+(.*)$') { throw "fake icacls: bad args $Arguments" }
+  $target = $matches[1]; $rest = $matches[2]
+  if ($rest -match '^/inheritance:r /grant:r \*S-1-5-18:\(OI\)\(CI\)F \*S-1-5-32-544:\(OI\)\(CI\)F( /T)? /C /Q$') {
+    $k = Get-AclKey $target
+    if (-not ($S.AclStuck.ContainsKey($k) -or $S.AclHard.ContainsKey($k))) { $S.Acl[$k] = $script:SddlPrivateDir; $S.AclUnreadable.Remove($k) }
+    if ($matches[1] -and (Test-Path -LiteralPath $target -PathType Container)) {
+      # 0.1.0 behaviour: (OI)(CI) grants do not apply to files, inheritance removed -> protected empty DACL.
+      foreach ($c in (Get-FakeChildren $target)) { if (-not ($S.AclStuck.ContainsKey($c) -or $S.AclHard.ContainsKey($c))) { $S.Acl[$c] = $(if (Test-Path -LiteralPath $c -PathType Container) { $script:SddlPrivateDir } else { $script:SddlEmpty }) } }
+    }
+    return @{ ExitCode = 0; Output = '' }
+  }
+  if ($rest -eq '/reset /T /C /Q' -and $target.EndsWith('\*')) {
+    $dir = $target.Substring(0, $target.Length - 2)
+    $parentPrivate = ((Get-FakeSddl $S $dir) -ceq $script:SddlPrivateDir)
+    foreach ($c in (Get-FakeChildren $dir)) {
+      if ($S.AclStuck.ContainsKey($c) -or $S.AclHard.ContainsKey($c)) { continue }   # /C: failure skipped, exit code still 0
+      $S.Acl[$c] = $(if ($parentPrivate) { $script:SddlPrivateFile } else { $script:SddlInherited }); $S.AclUnreadable.Remove($c)
+    }
+    return @{ ExitCode = 0; Output = '' }
+  }
+  if ($rest -eq '/setowner *S-1-5-32-544 /C /Q') { $S.AclStuck.Remove((Get-AclKey $target)); return @{ ExitCode = 0; Output = '' } }
+  throw "fake icacls: unknown $Arguments"
 }
 function Format-Qc($name, $svc) {
   $st = switch ($svc.Start) { 2 { if ($svc.Delayed) { '2   AUTO_START  (DELAYED)' } else { '2   AUTO_START' } } 3 { '3   DEMAND_START' } 4 { '4   DISABLED' } }
@@ -95,7 +137,11 @@ function Invoke-Fake($S, [string]$Root, [string]$Exe, [string]$Arguments) {
       return @{ ExitCode = 0; Output = ("Active Connections`r`n  TCP    127.0.0.1:5000     127.0.0.1:47989       ESTABLISHED     1`r`n" + ($lines -join "`r`n")) }
     }
     'robocopy.exe' { return (Invoke-FakeRobocopy $Arguments $Root) }
-    default { return @{ ExitCode = 0; Output = '' } }   # icacls, netsh, schtasks, powershell (driver installers)
+    'icacls.exe' {
+      if ($Arguments -match '\\ProgramData\\ARBS-H"') { return @{ ExitCode = 0; Output = '' } }   # data root (Initialize-DataRoot)
+      return (Invoke-FakeIcacls $S $Arguments)
+    }
+    default { return @{ ExitCode = 0; Output = '' } }   # netsh, schtasks, powershell (driver installers)
   }
 }
 
@@ -110,6 +156,7 @@ function Invoke-Case([string]$Name, [scriptblock]$Body, [switch]$NoVibepolloDir)
       . $Helper -Action lib -DryRun -FakeRoot $root -AppDir $app -DataRoot $data -VibepolloConfig $vib
       $S = New-FakeState
       $script:Runner = { param($Exe, $Arguments) Invoke-Fake $S $root $Exe $Arguments }
+      $script:AclReader = { param($Path) Get-FakeSddl $S $Path }
       & $Body
       $global:T_RealExec += $script:RealExecCount
     }
@@ -218,7 +265,9 @@ Invoke-Case 'migrate-ok' {
   Eq (Mutations) @(
     "robocopy.exe `"$vib`" `"$app\config.migrating`" sunshine.conf apps.json sunshine_state.json vibeshine_state.json /B /COPY:DAT /R:0 /W:0 /NP /NJH /NJS",
     "robocopy.exe `"$vib\credentials`" `"$app\config.migrating\credentials`" /E /B /COPY:DAT /R:0 /W:0 /NP /NJH /NJS",
-    "icacls.exe `"$app\config.migrating\credentials`" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /T /C /Q") 'migrate commands'
+    "icacls.exe `"$app\config.migrating\credentials`" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /C /Q",
+    "icacls.exe `"$app\config.migrating\credentials\*`" /reset /T /C /Q") 'migrate commands (R1a-fix1: folder grant without /T, then files /reset)'
+  Eq (Get-CredentialsAclProblems (Join-Path $cfg 'credentials')).Count 0 'migrated credentials folder and files private (fake ACL)'
 }
 foreach ($missing in @('vibeshine_state.json', 'credentials')) {
   $global:M = $missing
@@ -371,9 +420,124 @@ Invoke-Case 'post-install-first' {
   Eq $script:Result['migrate'] 'ok' 'first install: migrated'
   Eq $script:Result['config'] 'kept' 'first install: template not used over migrated config'
   Eq $script:Result['start'] 'auto-started' 'first install: started'
+  Eq $script:Result['credentials-acl'] 'ok' 'first install: migrated credentials already private'
   Eq $S.Services.ARBSHService.Start 2 'ARBSHService auto'; Eq $S.Services.ARBSHService.State 'RUNNING' 'ARBSHService running'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.0' 'version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.1' 'version file'
   Ok (-not ((Mutations) -match '^sc\.exe (delete|start) ApolloService|delete rule name="Vibepollo|VibepolloDisplayRestore|^pnputil\.exe /(delete|remove)')) 'Vibepollo service/rules/task/drivers never deleted'
+}
+
+# ---------------- R1a-fix1: credentials ACL (F1-F3, F7) ----------------
+Invoke-Case 'sddl-rules' {
+  Ok (Test-PrivateSddl 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)') 'private folder SDDL'
+  Ok (Test-PrivateSddl 'O:BAG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)') 'private file SDDL (inherited)'
+  Ok (Test-PrivateSddl 'O:BAG:DUD:PAI(A;;0x1f01ff;;;S-1-5-18)(A;;FA;;;BA)S:AI') 'hex full control, SID form, group DU, SACL part'
+  Ok (-not (Test-PrivateSddl 'O:BAG:SYD:PAI')) '0.1.0 file SDDL (no ACE) is not private'
+  Ok (-not (Test-PrivateSddl '')) 'unreadable (empty) is not private'
+  Ok (-not (Test-PrivateSddl 'O:BAG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)')) 'Users read is not private'
+  Ok (-not (Test-PrivateSddl 'O:BAG:SYD:PAI(A;;FA;;;SY)')) 'SYSTEM only (no Administrators) is not private'
+  Ok (-not (Test-PrivateSddl 'O:BAG:SYD:PAI(D;;FA;;;SY)(A;;FA;;;SY)(A;;FA;;;BA)')) 'deny ACE is not private'
+  Ok (-not (Test-PrivateSddl 'O:BAG:SYD:PAI(A;OICIIO;FA;;;SY)(A;;FA;;;BA)')) 'inherit-only SYSTEM ACE does not count'
+  Ok (-not (Test-PrivateSddl 'O:BAG:SYD:PAI(A;;0x1200a9;;;SY)(A;;FA;;;BA)')) 'SYSTEM read only is not full control'
+  Ok (Test-PrivateSddl 'O:BAG:SYD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;S-1-5-21-1-2-3-1001)' -ExtraAllowed @('S-1-5-21-1-2-3-1001')) 'ExtraAllowed (scratch stand-in only)'
+}
+function New-ArbsCredentials([string]$App) {
+  $c = Join-Path $App 'config\credentials'
+  New-Item -ItemType Directory -Path $c -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $App 'config\sunshine.conf'), 'cfg')
+  foreach ($f in @('cacert.pem', 'cakey.pem')) { [IO.File]::WriteAllText((Join-Path $c $f), 'FAKE-TEST') }
+  return $c
+}
+function Set-FakeAcl($S, [string]$Path, [string]$Sddl) { $S.Acl[(Get-AclKey $Path)] = $Sddl }
+$script:F1Folder = '"{0}" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /C /Q'
+$script:F1Files = '"{0}\*" /reset /T /C /Q'
+function F1Cmds([string]$Cred) { @(('icacls.exe ' + ($script:F1Folder -f $Cred)), ('icacls.exe ' + ($script:F1Files -f $Cred))) }
+Invoke-Case 'credacl-old-command-detected' {
+  $cred = New-ArbsCredentials $app
+  [void](Invoke-Ext 'icacls.exe' ('{0} /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /T /C /Q' -f (Quote $cred)))
+  Eq (Get-FakeSddl $S (Join-Path $cred 'cacert.pem')) 'O:BAG:SYD:PAI' 'fake model: 0.1.0 command leaves files with no ACE'
+  Eq (Get-CredentialsAclProblems $cred).Count 2 '0.1.0 result detected: both files not private'
+}
+Invoke-Case 'credacl-ok' {
+  $cred = New-ArbsCredentials $app
+  Set-FakeAcl $S $cred $script:SddlPrivateDir
+  foreach ($f in @('cacert.pem', 'cakey.pem')) { Set-FakeAcl $S (Join-Path $cred $f) $script:SddlPrivateFile }
+  Eq (Invoke-RepairCredentialsAcl) 0 'already private: rc 0'
+  Eq $script:Result['credentials-acl'] 'ok' 'already private: ok'
+  Eq @(Mutations).Count 0 'already private: no icacls'
+}
+Invoke-Case 'credacl-absent' {
+  Eq (Invoke-RepairCredentialsAcl) 0 'no credentials folder: rc 0'
+  Eq $script:Result['credentials-acl'] 'absent' 'no credentials folder: absent'
+  Eq @(Mutations).Count 0 'no credentials folder: no icacls'
+}
+Invoke-Case 'credacl-broken-0.1.0' {
+  $cred = New-ArbsCredentials $app
+  Set-FakeAcl $S $cred $script:SddlPrivateDir
+  foreach ($f in @('cacert.pem', 'cakey.pem')) { Set-FakeAcl $S (Join-Path $cred $f) $script:SddlEmpty }
+  Eq (Invoke-RepairCredentialsAcl) 0 '0.1.0 install: rc 0'
+  Eq $script:Result['credentials-acl'] 'repaired' '0.1.0 install: repaired'
+  Eq (Mutations) (F1Cmds $cred) '0.1.0 install: folder grant first, then files /reset'
+  Eq (Get-FakeSddl $S (Join-Path $cred 'cakey.pem')) $script:SddlPrivateFile '0.1.0 install: key file inherits SYSTEM + Administrators only'
+}
+Invoke-Case 'credacl-users-inherited' {
+  $cred = New-ArbsCredentials $app   # unknown paths answer the Program Files default (Users read)
+  Eq (Invoke-RepairCredentialsAcl) 0 'Users read: rc 0'
+  Eq $script:Result['credentials-acl'] 'repaired' 'Users read: repaired'
+  Eq (Get-CredentialsAclProblems $cred).Count 0 'Users read removed from folder and files'
+}
+Invoke-Case 'credacl-unreadable-then-fixed' {
+  $cred = New-ArbsCredentials $app
+  Set-FakeAcl $S $cred $script:SddlPrivateDir
+  Set-FakeAcl $S (Join-Path $cred 'cacert.pem') $script:SddlPrivateFile
+  $S.AclUnreadable[(Get-AclKey (Join-Path $cred 'cakey.pem'))] = $true
+  Eq (Invoke-RepairCredentialsAcl) 0 'Get-Acl failure: rc 0'
+  Eq $script:Result['credentials-acl'] 'repaired' 'Get-Acl failure counts as not private, then repaired'
+}
+Invoke-Case 'credacl-retry-owner' {
+  $cred = New-ArbsCredentials $app
+  Set-FakeAcl $S $cred $script:SddlPrivateDir
+  $key = Join-Path $cred 'cakey.pem'
+  Set-FakeAcl $S (Join-Path $cred 'cacert.pem') $script:SddlEmpty; Set-FakeAcl $S $key $script:SddlEmpty
+  $S.AclStuck[(Get-AclKey $key)] = $true   # /reset skipped until the owner is Administrators
+  Eq (Invoke-RepairCredentialsAcl) 0 'retry: rc 0'
+  Eq $script:Result['credentials-acl'] 'repaired' 'retry: repaired'
+  Eq (Mutations) (@(F1Cmds $cred) + @("icacls.exe `"$key`" /setowner *S-1-5-32-544 /C /Q") + @(F1Cmds $cred)) 'retry: F1, setowner on the failed file only, F1 again'
+}
+Invoke-Case 'credacl-failed' {
+  $cred = New-ArbsCredentials $app
+  $key = Join-Path $cred 'cakey.pem'
+  Set-FakeAcl $S $key $script:SddlEmpty
+  $S.AclHard[(Get-AclKey $key)] = $true   # never fixable (icacls /C /Q still exits 0)
+  Eq (Invoke-RepairCredentialsAcl) 6 'unfixable: rc 6'
+  Eq $script:Result['credentials-acl'] 'failed' 'unfixable: failed'
+  Eq @(Mutations | Where-Object { $_ -match 'setowner' }).Count 1 'unfixable: exactly one retry'
+}
+Invoke-Case 'post-install-upgrade-repairs-0.1.0' {
+  $S.Services.ApolloService.Start = 3; $S.Services.ApolloService.State = 'STOPPED'
+  $S.Services['ARBSHService'] = @{ Start = 2; Delayed = $false; State = 'STOPPED'; Bin = "`"$app\tools\sunshinesvc.exe`""; StopWorks = $true }
+  $cred = New-ArbsCredentials $app
+  Set-FakeAcl $S $cred $script:SddlPrivateDir
+  foreach ($f in @('cacert.pem', 'cakey.pem')) { Set-FakeAcl $S (Join-Path $cred $f) $script:SddlEmpty }
+  Eq (Invoke-PostInstall) 0 'upgrade over 0.1.0: rc 0'
+  Eq $script:Result['migrate'] 'not-selected' 'upgrade: no migration'
+  Eq $script:Result['credentials-acl'] 'repaired' 'upgrade: credentials repaired'
+  Eq $script:Result['start'] 'auto-started' 'upgrade: started after repair'
+  $m = @(Mutations)
+  $iReset = [array]::IndexOf($m, (F1Cmds $cred)[1]); $iStart = [array]::IndexOf($m, 'sc.exe start ARBSHService')
+  Ok ($iReset -ge 0 -and $iReset -lt $iStart) 'upgrade: repair before service start'
+}
+Invoke-Case 'post-install-acl-failed-manual' {
+  $S.Services.ApolloService.Start = 3; $S.Services.ApolloService.State = 'STOPPED'
+  $S.Services['ARBSHService'] = @{ Start = 2; Delayed = $false; State = 'STOPPED'; Bin = "`"$app\tools\sunshinesvc.exe`""; StopWorks = $true }
+  $cred = New-ArbsCredentials $app
+  $S.AclHard[(Get-AclKey (Join-Path $cred 'cacert.pem'))] = $true; Set-FakeAcl $S (Join-Path $cred 'cacert.pem') $script:SddlEmpty
+  Eq (Invoke-PostInstall) 6 'ACL failed: post-install rc 6'
+  Eq $script:Result['credentials-acl'] 'failed' 'ACL failed: result'
+  Eq $script:Result['start'] 'manual-credentials-acl-failed' 'ACL failed: start result'
+  Ok ((Mutations) -contains 'sc.exe config ARBSHService start= demand') 'ACL failed: ARBS-H service set to manual'
+  Ok (-not ((Mutations) -match '^sc\.exe (start ARBSHService|config ARBSHService start= auto)')) 'ACL failed: service not started, not auto'
+  Eq $S.Services.ARBSHService.State 'STOPPED' 'ACL failed: service still stopped'
+  Ok (-not ((Mutations) -match 'ApolloService')) 'ACL failed: Vibepollo untouched'
 }
 
 # ---------------- T5 rollback ----------------

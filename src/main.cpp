@@ -20,6 +20,7 @@
 #include <thread>
 
 // local includes
+#include "arbs_startup_errors.h"
 #include "confighttp.h"
 #include "entry_handler.h"
 #include "globals.h"
@@ -371,6 +372,24 @@ int main(int argc, char *argv[]) {
   if (!log_deinit_guard) {
     BOOST_LOG(error) << "Logging failed to initialize"sv;
   }
+
+  // ARBS-H R1a-fix1 F6: an exception that escapes a thread (or main) used to end the process with only
+  // libstdc++'s "terminate called ..." on stderr. Write what() (+ code for system errors) to stderr and
+  // the log, flush, then abort as before. Only the first entry logs (a throw inside the handler aborts).
+  std::set_terminate([]() {
+    static std::atomic_flag entered;  // C++20: starts clear
+    if (!entered.test_and_set()) {
+      try {
+        const auto text = arbs::startup_errors::describe_current();
+        std::fputs((text + "\n").c_str(), stderr);
+        std::fflush(stderr);
+        BOOST_LOG(fatal) << text;
+        logging::log_flush();
+      } catch (...) {
+      }
+    }
+    std::abort();
+  });
 
 #ifdef WIN32
   // Own cleanup even for maintenance commands and early startup returns.

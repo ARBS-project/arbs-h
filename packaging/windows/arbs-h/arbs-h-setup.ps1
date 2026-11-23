@@ -23,7 +23,7 @@ param(
   [string]$AppDir = (Join-Path $env:ProgramFiles 'ARBS-H'),
   [string]$DataRoot = (Join-Path $env:ProgramData 'ARBS-H'),
   [string]$VibepolloConfig = '',
-  [string]$Version = '0.1.0',
+  [string]$Version = '0.1.1',
   [string]$PlanOut = '',
   [string]$ResultOut = '',
   [string]$OutDir = '',
@@ -59,6 +59,7 @@ $script:BackupKeep = 3
 
 $script:Plan = New-Object System.Collections.Generic.List[string]
 $script:Runner = $null
+$script:AclReader = $null   # tests inject { param($Path) <SDDL> } (the fake runner does not model icacls)
 $script:RealExecCount = 0
 $script:LogFile = $null
 $script:Result = [ordered]@{}
@@ -336,6 +337,88 @@ function Repair-ConfText([string]$Text) {
   return (($out -join $nl) + $nl)
 }
 
+# ---------------------------------------------------------------------------------------------------------------
+# Credentials folder ACL (R1a-fix1). 0.1.0 ran "icacls <cred> /inheritance:r /grant:r ...(OI)(CI)F ... /T": the
+# (OI)(CI) grants do not apply to files, so every file was left with a protected DACL and no ACE at all and even
+# SYSTEM could not open cacert.pem (sunshine.exe terminated at start, system:5). icacls /C /Q also exits 0 when an
+# item failed, so the result is always judged by reading the ACL back.
+# ---------------------------------------------------------------------------------------------------------------
+$script:PrivateSids = @('S-1-5-18', 'S-1-5-32-544')
+
+function Get-PathSddl([string]$Path) {
+  try {
+    if ($script:AclReader) { return [string](& $script:AclReader $Path) }
+    return [string](Get-Acl -LiteralPath $Path).Sddl
+  }
+  catch { Write-Log "ACL read failed: $Path ($($_.Exception.Message))"; return '' }
+}
+
+# True when the DACL grants full control to SYSTEM and Administrators (ACEs that apply to the object itself) and
+# allows nobody else. Deny ACEs, other principals or an unreadable/empty DACL count as not private.
+# -ExtraAllowed is only for the scratch reproduction (a non-administrator stand-in for SYSTEM).
+function Test-PrivateSddl([string]$Sddl, [string[]]$ExtraAllowed = @()) {
+  if (-not $Sddl) { return $false }
+  $m = [regex]::Match($Sddl, 'D:[A-Z]*((?:\([^)]*\))*)')
+  if (-not $m.Success) { return $false }
+  $allowed = @($script:PrivateSids) + @($ExtraAllowed)
+  $hasSystem = $false; $hasAdmins = $false
+  foreach ($ace in [regex]::Matches($m.Groups[1].Value, '\(([^)]*)\)')) {
+    $f = $ace.Groups[1].Value -split ';'
+    if ($f.Count -lt 6) { return $false }
+    $sid = switch ($f[5]) { 'SY' { 'S-1-5-18' } 'BA' { 'S-1-5-32-544' } default { $f[5] } }
+    if ($f[0] -ne 'A' -or $allowed -notcontains $sid) { return $false }
+    if ($f[1] -notmatch 'IO' -and @('FA', '0x1f01ff') -contains $f[2]) {
+      if ($sid -eq 'S-1-5-18') { $hasSystem = $true }
+      if ($sid -eq 'S-1-5-32-544') { $hasAdmins = $true }
+    }
+  }
+  return ($hasSystem -and $hasAdmins)
+}
+
+# Folder and every file/folder below it whose ACL is not private (or cannot be read).
+function Get-CredentialsAclProblems([string]$Dir) {
+  $bad = @()
+  if (-not (Test-PrivateSddl (Get-PathSddl $Dir))) { $bad += $Dir }
+  foreach ($item in @(Get-ChildItem -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue)) {
+    if (-not (Test-PrivateSddl (Get-PathSddl $item.FullName))) { $bad += $item.FullName }
+  }
+  return , $bad
+}
+
+# F1: protected SYSTEM + Administrators on the folder only (no /T), THEN the files reset to inherit from it. The order
+# matters: resetting the files first would let them inherit Users:(RX) from Program Files for a moment.
+function Set-CredentialsAcl([string]$Dir) {
+  [void](Invoke-Ext 'icacls.exe' ('{0} /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /C /Q' -f (Quote $Dir)))
+  [void](Invoke-Ext 'icacls.exe' ('{0} /reset /T /C /Q' -f (Quote (Join-Path $Dir '*'))))
+}
+
+# F2: every post-install (first install, upgrade, migrated or not). An existing 0.1.0 install is repaired here.
+# Result credentials-acl = ok (already private) | repaired | failed | absent (no folder yet; sunshine creates it).
+function Invoke-RepairCredentialsAcl {
+  $cred = Join-Path (Join-Path $AppDir 'config') 'credentials'
+  if (-not (Test-Path -LiteralPath $cred -PathType Container)) { Set-Result 'credentials-acl' 'absent'; return 0 }
+  $bad = Get-CredentialsAclProblems $cred
+  if ($bad.Count -eq 0) { Set-Result 'credentials-acl' 'ok'; return 0 }
+  Write-Log ('credentials ACL not private: {0} item(s), repairing' -f $bad.Count)
+  Set-CredentialsAcl $cred
+  $bad = Get-CredentialsAclProblems $cred
+  if ($bad.Count -gt 0) {
+    # One retry: owner Administrators (owner keeps READ_CONTROL/WRITE_DAC), then the same two commands.
+    Write-Log ('credentials ACL still not private: {0} item(s), retry with owner Administrators' -f $bad.Count)
+    foreach ($p in $bad) { [void](Invoke-Ext 'icacls.exe' ('{0} /setowner *S-1-5-32-544 /C /Q' -f (Quote $p))) }
+    Set-CredentialsAcl $cred
+    $bad = Get-CredentialsAclProblems $cred
+  }
+  if ($bad.Count -gt 0) {
+    foreach ($p in $bad) { Write-Log "credentials ACL not repaired: $p" }
+    Write-Log ('manual repair (administrator): icacls {0} /reset /T  after  icacls {1} /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F' -f (Quote (Join-Path $cred '*')), (Quote $cred))
+    Set-Result 'credentials-acl' 'failed'
+    return 6
+  }
+  Set-Result 'credentials-acl' 'repaired'
+  return 0
+}
+
 function Invoke-Migrate {
   $target = Join-Path $AppDir 'config'
   if (Test-Path -LiteralPath (Join-Path $target 'sunshine.conf')) { Set-Result 'migrate' 'skipped-existing-config'; return 0 }
@@ -365,8 +448,11 @@ function Invoke-Migrate {
   Copy-Item -LiteralPath $conf -Destination (Join-Path $tmp 'sunshine.conf.from-vibepollo') -Force
   $text = [IO.File]::ReadAllText($conf)
   [IO.File]::WriteAllText($conf, (Repair-ConfText $text), (New-Object Text.UTF8Encoding($false)))
-  $r = Invoke-Ext 'icacls.exe' ('{0} /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /T /C /Q' -f (Quote $cred))
-  if ($r.ExitCode -ne 0) { Write-Log 'icacls on copied credentials failed (copy kept, inherited ACL)' }
+  # R1a-fix1 F1/F3: folder only, then the files inherit from it; judged by reading the ACL back (not the exit code).
+  Set-CredentialsAcl $cred
+  $bad = Get-CredentialsAclProblems $cred
+  if ($bad.Count -gt 0) { Write-Log ('credentials ACL check after copy: {0} item(s) not private (post-install repair step retries)' -f $bad.Count) }
+  else { Write-Log 'credentials ACL check after copy: ok' }
   if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
   Rename-Item -LiteralPath $tmp -NewName 'config'
   Set-Result 'migrate' 'ok'
@@ -488,10 +574,17 @@ function Invoke-PostInstall {
   }
   else { Set-Result 'migrate' 'not-selected' }
   if ((Invoke-EnsureConfig) -ne 0) { return 1 }
+  $acl = Invoke-RepairCredentialsAcl
   if ((Invoke-Drivers) -ne 0 -and $rc -eq 0) { $rc = 4 }
   if ((Invoke-Service) -ne 0) { return 1 }
   if ((Invoke-Firewall) -ne 0) { return 1 }
   [IO.File]::WriteAllText((Join-Path $AppDir 'arbs-h-version.txt'), $Version, (New-Object Text.UTF8Encoding($false)))
+  if ($acl -ne 0) {
+    # sunshine.exe cannot read its TLS certificate with this ACL and would only restart in a loop: leave it manual.
+    [void](Invoke-Ext 'sc.exe' ('config {0} start= demand' -f $script:ServiceName))
+    Set-Result 'start' 'manual-credentials-acl-failed'
+    return 6
+  }
   $s = Invoke-Start
   if ($s -eq 1) { return 1 }
   if ($s -eq 10 -and $rc -eq 0) { $rc = 10 }
