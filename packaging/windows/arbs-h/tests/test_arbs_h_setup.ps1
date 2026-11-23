@@ -31,6 +31,9 @@ function New-FakeState {
     Usbip = $true; SudoVda = $true; Ports = @(); Exits = @{}
     # R1a-fix1: fake ACL model (icacls effects + Get-Acl answers). Keys are lower-case full paths.
     Acl = @{}; AclStuck = @{}; AclHard = @{}; AclUnreadable = @{}
+    # R1b-fix1: fake process table and restore task.
+    Procs = (New-Object System.Collections.ArrayList); Locked = @(); KillWorks = $true; ReviveOnce = $false; StopFailsAfterRevive = $false
+    TaskPresent = $false; HelperGoneAfter = 0; ListCalls = 0; LockCalls = 0
   }
 }
 $script:SddlInherited = 'O:BAG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)'   # Program Files default
@@ -137,11 +140,28 @@ function Invoke-Fake($S, [string]$Root, [string]$Exe, [string]$Arguments) {
       return @{ ExitCode = 0; Output = ("Active Connections`r`n  TCP    127.0.0.1:5000     127.0.0.1:47989       ESTABLISHED     1`r`n" + ($lines -join "`r`n")) }
     }
     'robocopy.exe' { return (Invoke-FakeRobocopy $Arguments $Root) }
+    'schtasks.exe' {
+      if ($Arguments -like '/Query*' -and -not $S.TaskPresent) { return @{ ExitCode = 1; Output = '' } }
+      return @{ ExitCode = 0; Output = '' }
+    }
+    'taskkill.exe' {
+      if ($Arguments -notmatch '^/F /PID (\d+) /FI "IMAGENAME eq ([^"]+)"$') { throw "fake taskkill: bad args $Arguments" }
+      $id = [int]$matches[1]; $image = $matches[2]
+      $hit = @($S.Procs | Where-Object { $_.Id -eq $id -and $_.Name -ieq $image })
+      if ($S.KillWorks) { foreach ($p in $hit) { [void]$S.Procs.Remove($p) } }
+      if ($S.ReviveOnce) {
+        $S.ReviveOnce = $false
+        $S.Services.ARBSHService.State = 'RUNNING'
+        if ($S.StopFailsAfterRevive) { $S.Services.ARBSHService.StopWorks = $false }
+        [void]$S.Procs.Add([pscustomobject]@{ Id = $id + 1000; ParentId = 4; Name = 'sunshine.exe'; Path = ($hit[0].Path) })
+      }
+      return @{ ExitCode = 0; Output = '' }
+    }
     'icacls.exe' {
       if ($Arguments -match '\\ProgramData\\ARBS-H"') { return @{ ExitCode = 0; Output = '' } }   # data root (Initialize-DataRoot)
       return (Invoke-FakeIcacls $S $Arguments)
     }
-    default { return @{ ExitCode = 0; Output = '' } }   # netsh, schtasks, powershell (driver installers)
+    default { return @{ ExitCode = 0; Output = '' } }   # netsh, powershell (driver installers)
   }
 }
 
@@ -163,7 +183,7 @@ function Invoke-Case([string]$Name, [scriptblock]$Body, [switch]$NoVibepolloDir)
   }
   catch { $global:T_Fail++; Write-Host "FAIL: case $Name threw: $($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)" }
 }
-function Mutations { @($script:Plan | Where-Object { $_ -notmatch '^(sc\.exe (qc|query) |netstat\.exe |pnputil\.exe )' }) }
+function Mutations { @($script:Plan | Where-Object { $_ -notmatch '^(sc\.exe (qc|query) |netstat\.exe |pnputil\.exe |schtasks\.exe /Query )' }) }
 function New-VibepolloConfig([string]$Dir, [string[]]$Skip = @()) {
   New-Item -ItemType Directory -Path (Join-Path $Dir 'credentials') -Force | Out-Null
   $conf = "locale = ko`r`ndd_use_sunshine_virtual_display_driver = enabled`r`nsunshine_name = HOST`r`ndd_use_sunshine_virtual_display_driver = enabled`r`nfile_apps = C:\Vibepollo\config\apps.json`r`n"
@@ -540,6 +560,261 @@ Invoke-Case 'post-install-acl-failed-manual' {
   Ok (-not ((Mutations) -match 'ApolloService')) 'ACL failed: Vibepollo untouched'
 }
 
+# ---------------- R1b-fix1 G1: ARBS-H processes left after the service stop (H1-H12) ----------------
+$script:HelperExe = 'sunshine_display_helper.exe'
+function New-FakeProc([int]$Id, [string]$Name, [string]$Path, [int]$ParentId = 4) { [pscustomobject]@{ Id = $Id; ParentId = $ParentId; Name = $Name; Path = $Path } }
+function Get-FakeProcs($S) {
+  $S.ListCalls++
+  if ($S.HelperGoneAfter -gt 0 -and $S.ListCalls -ge $S.HelperGoneAfter) {
+    foreach ($p in @($S.Procs | Where-Object { $_.Name -ieq $script:HelperExe })) { [void]$S.Procs.Remove($p) }
+  }
+  return @($S.Procs)
+}
+# Installed ARBS-H: version file, running service, config to back up, process list and lock answers from the fake.
+function Initialize-FakeInstall {
+  [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.1.2')
+  New-Item -ItemType Directory -Path (Join-Path $app 'tools'), (Join-Path $app 'config') -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $app 'config\sunshine.conf'), 'cfg')
+  $S.Services['ARBSHService'] = @{ Start = 2; Delayed = $false; State = 'RUNNING'; Bin = "`"$app\tools\sunshinesvc.exe`""; StopWorks = $true }
+  $S.Services.ApolloService.Start = 3; $S.Services.ApolloService.State = 'STOPPED'
+  $script:ProcessLister = { Get-FakeProcs $S }
+  $script:FileBusyProbe = { param($Path) $S.Locked -contains (Split-Path -Leaf $Path) }
+}
+function Kills { @($script:Plan | Where-Object { $_ -match '^taskkill\.exe ' }) }
+function KillCmd([int]$Id, [string]$Name) { "taskkill.exe /F /PID $Id /FI `"IMAGENAME eq $Name`"" }
+function Test-NoBackup { Ok (-not (Test-Path -LiteralPath (Join-Path $data 'backup'))) 'no backup folder'; Ok (@($script:Plan | Where-Object { $_ -match '^robocopy' }).Count -eq 0) 'no robocopy' }
+
+Invoke-Case 'h1-other-path-same-name' {
+  Initialize-FakeInstall
+  [void]$S.Procs.Add((New-FakeProc 101 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  [void]$S.Procs.Add((New-FakeProc 102 $script:HelperExe "C:\Vibepollo\tools\$($script:HelperExe)"))
+  [void]$S.Procs.Add((New-FakeProc 103 'sunshine.exe' 'C:\Apollo\sunshine.exe'))
+  Eq (Invoke-Prepare) 0 'H1 rc'
+  Eq (Kills) @(KillCmd 101 $script:HelperExe) 'H1 only the process under {app} is ended'
+  Eq @($S.Procs | ForEach-Object { $_.Id }) @(102, 103) 'H1 Vibepollo and Apollo processes still there'
+}
+Invoke-Case 'h2-prefix-path' {
+  Initialize-FakeInstall
+  [void]$S.Procs.Add((New-FakeProc 201 'sunshine.exe' ($app + '2\sunshine.exe')))
+  [void]$S.Procs.Add((New-FakeProc 202 'sunshine.exe' ($app + ' Backup\tools\sunshine.exe')))
+  Eq (Invoke-Prepare) 0 'H2 rc'
+  Eq @(Kills).Count 0 'H2 a folder that only starts with the same text is not {app}'
+}
+Invoke-Case 'h3-order-no-tree' {
+  Initialize-FakeInstall
+  [void]$S.Procs.Add((New-FakeProc 301 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  [void]$S.Procs.Add((New-FakeProc 302 'sunshine.exe' "$app\sunshine.exe"))
+  Eq (Invoke-Prepare) 0 'H3 rc'
+  Eq (Kills) @((KillCmd 302 'sunshine.exe'), (KillCmd 301 $script:HelperExe)) 'H3 sunshine first, helper after'
+  Ok (-not ((Kills) -match '/T\b')) 'H3 no /T'
+  $m = @(Mutations)
+  $iKill = [array]::IndexOf($m, (KillCmd 301 $script:HelperExe))
+  $iCopy = -1; for ($i = 0; $i -lt $m.Count; $i++) { if ($m[$i] -match '^robocopy') { $iCopy = $i; break } }
+  Ok ($m[0] -eq 'sc.exe stop ARBSHService' -and $iKill -gt 0 -and $iCopy -gt $iKill) 'H3 service stop -> process stop -> backup'
+}
+Invoke-Case 'h4-no-process' {
+  Initialize-FakeInstall
+  Eq (Invoke-Prepare) 0 'H4 rc'
+  $m = @(Mutations)
+  Eq $m.Count 2 'H4 only service stop + backup'
+  Eq $m[0] 'sc.exe stop ARBSHService' 'H4 first command'
+  Ok ($m[1] -match '^robocopy\.exe ') 'H4 second command'
+  Eq @($script:Plan | Where-Object { $_ -match 'schtasks|taskkill|qc ApolloService' }).Count 0 'H4 no extra query or kill'
+  Eq $script:Result['app-processes'] 'none' 'H4 result'
+  Eq $script:Result['service-before'] 'RUNNING' 'H4 service-before'
+}
+Invoke-Case 'h5-still-running' {
+  Initialize-FakeInstall
+  $S.KillWorks = $false
+  [void]$S.Procs.Add((New-FakeProc 501 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  Eq (Invoke-Prepare) 7 'H5 process survives: rc 7'
+  Eq $script:Result['busy'] $script:HelperExe 'H5 busy names the file'
+  Eq $script:Result['prepare'] 'app-busy' 'H5 result'
+  Eq @(Kills).Count 3 'H5 three attempts'
+  Test-NoBackup
+}
+Invoke-Case 'h5-file-locked' {
+  Initialize-FakeInstall
+  [IO.File]::WriteAllText((Join-Path $app 'tools\locked.dll'), 'x')
+  [IO.File]::WriteAllText((Join-Path $app 'tools\free.dll'), 'x')
+  [IO.File]::WriteAllText((Join-Path $app 'tools\notes.txt'), 'x')
+  $S.Locked = @('locked.dll', 'notes.txt')
+  Eq (Invoke-Prepare) 7 'H5 locked file: rc 7'
+  Eq $script:Result['busy'] 'locked.dll' 'H5 only exe/dll are judged'
+  Eq @(Kills).Count 0 'H5 nothing to end'
+  Test-NoBackup
+}
+Invoke-Case 'h5-lock-clears' {
+  Initialize-FakeInstall
+  [IO.File]::WriteAllText((Join-Path $app 'tools\late.dll'), 'x')
+  $S.LockCalls = 0
+  $script:FileBusyProbe = { param($Path) $S.LockCalls++; $S.LockCalls -le 2 }
+  Eq (Invoke-Prepare) 0 'H5 short lock (scanner) clears: rc 0'
+  Ok (Test-Path -LiteralPath (Join-Path $data 'backup')) 'H5 short lock: backup runs'
+}
+Invoke-Case 'h6-service-returns' {
+  Initialize-FakeInstall
+  $S.ReviveOnce = $true
+  [void]$S.Procs.Add((New-FakeProc 601 'sunshine.exe' "$app\sunshine.exe"))
+  Eq (Invoke-Prepare) 0 'H6 rc'
+  Eq @($script:Plan | Where-Object { $_ -eq 'sc.exe stop ARBSHService' }).Count 2 'H6 service stopped again'
+  Eq $S.Services.ARBSHService.State 'STOPPED' 'H6 service stays stopped'
+  Eq @($S.Procs).Count 0 'H6 revived process ended'
+}
+Invoke-Case 'h6-service-will-not-stop' {
+  Initialize-FakeInstall
+  $S.ReviveOnce = $true
+  [void]$S.Procs.Add((New-FakeProc 611 'sunshine.exe' "$app\sunshine.exe"))
+  $S.StopFailsAfterRevive = $true
+  Eq (Invoke-Prepare) 2 'H6 service cannot be stopped again: rc 2'
+  Test-NoBackup
+}
+Invoke-Case 'h7-drive-root' {
+  Initialize-FakeInstall
+  [void]$S.Procs.Add((New-FakeProc 701 'sunshine.exe' 'D:\sunshine.exe'))
+  $AppDir = 'D:\'
+  Eq (Stop-AppProcesses (Get-ServiceInfo 'ARBSHService')) 0 'H7 drive root rc'
+  Eq @(Kills).Count 0 'H7 drive root: no kill'
+  Eq $script:Result['app-processes'] 'skipped-not-arbs-folder' 'H7 drive root result'
+}
+Invoke-Case 'h7-apollo-in-folder' {
+  Initialize-FakeInstall
+  $S.Services.ApolloService.Bin = "`"$app\tools\sunshinesvc.exe`" --service"
+  [void]$S.Procs.Add((New-FakeProc 711 'sunshine.exe' "$app\sunshine.exe"))
+  Eq (Stop-AppProcesses (Get-ServiceInfo 'ARBSHService')) 0 'H7 Apollo in folder rc'
+  Eq @(Kills).Count 0 'H7 Apollo in folder: no kill'
+  Eq $script:Result['app-processes'] 'skipped-apollo-in-folder' 'H7 Apollo in folder result'
+}
+Invoke-Case 'h7-unmarked-folder' {
+  $script:ProcessLister = { Get-FakeProcs $S }
+  [void]$S.Procs.Add((New-FakeProc 721 'other.exe' "$app\other.exe"))
+  Eq (Invoke-Prepare) 0 'H7 folder without marker rc'
+  Eq @(Kills).Count 0 'H7 folder without marker: no kill'
+  Eq $script:Result['app-processes'] 'skipped-not-arbs-folder' 'H7 folder without marker result'
+}
+Invoke-Case 'h7-service-path-marks-folder' {
+  Initialize-FakeInstall
+  Remove-Item -LiteralPath (Join-Path $app 'arbs-h-version.txt')
+  [void]$S.Procs.Add((New-FakeProc 731 'sunshine.exe' "$app\sunshine.exe"))
+  Eq (Invoke-Prepare) 0 'H7 service path under {app} rc'
+  Eq (Kills) @(KillCmd 731 'sunshine.exe') 'H7 ARBSHService under {app} counts as ours'
+}
+Invoke-Case 'h8-task-helper-ends' {
+  Initialize-FakeInstall
+  $S.TaskPresent = $true; $S.HelperGoneAfter = 8
+  [void]$S.Procs.Add((New-FakeProc 801 'sunshine.exe' "$app\sunshine.exe"))
+  [void]$S.Procs.Add((New-FakeProc 802 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  Eq (Invoke-Prepare) 0 'H8 rc'
+  Eq (Kills) @(KillCmd 801 'sunshine.exe') 'H8 helper finished its restore by itself and was not ended'
+  Eq @($script:Plan | Where-Object { $_ -eq 'schtasks.exe /Query /TN "\ARBS-H-DisplayRestore"' }).Count 1 'H8 task checked once'
+}
+Invoke-Case 'h8-task-wait-limit' {
+  Initialize-FakeInstall
+  $S.TaskPresent = $true
+  [void]$S.Procs.Add((New-FakeProc 811 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  Eq (Invoke-Prepare) 0 'H8 limit rc'
+  Eq (Kills) @(KillCmd 811 $script:HelperExe) 'H8 helper ended after the wait'
+  Ok ($S.ListCalls -ge 20) "H8 waited (polls $($S.ListCalls))"
+}
+Invoke-Case 'h8-no-task' {
+  Initialize-FakeInstall
+  [void]$S.Procs.Add((New-FakeProc 821 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  Eq (Invoke-Prepare) 0 'H8 no task rc'
+  Eq (Kills) @(KillCmd 821 $script:HelperExe) 'H8 no task: helper ended'
+  Ok ($S.ListCalls -lt 15) "H8 no task: no wait (polls $($S.ListCalls))"
+}
+Invoke-Case 'h9-same-version-reinstall' {
+  Initialize-FakeInstall
+  [void]$S.Procs.Add((New-FakeProc 901 'sunshine.exe' "$app\sunshine.exe"))
+  [void]$S.Procs.Add((New-FakeProc 902 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  Eq (Invoke-Prepare) 0 'H9 prepare rc'
+  Ok ($script:Result['prepare'] -match '^backup config-0\.1\.2-') 'H9 config backed up'
+  Eq $script:Result['app-processes'] 'stopped 2' 'H9 both ended'
+  Eq (Invoke-PostInstall) 0 'H9 post-install rc'
+  Eq $script:Result['start'] 'auto-started' 'H9 start = auto-started'
+  Eq $S.Services.ARBSHService.State 'RUNNING' 'H9 service running again'
+  Eq $S.Services.ARBSHService.Start 2 'H9 service auto'
+}
+Invoke-Case 'h9-upgrade-from-0.1.1' {
+  Initialize-FakeInstall
+  [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.1.1')
+  [void]$S.Procs.Add((New-FakeProc 911 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  Eq (Invoke-Prepare) 0 'H9 upgrade prepare rc'
+  Ok ($script:Result['prepare'] -match '^backup config-0\.1\.1-') 'H9 upgrade backup names the old version'
+  Eq (Invoke-PostInstall) 0 'H9 upgrade post-install rc'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.2' 'H9 upgrade version file'
+}
+Invoke-Case 'h10-unreadable-path' {
+  Initialize-FakeInstall
+  [void]$S.Procs.Add((New-FakeProc 1001 $script:HelperExe ''))
+  [void]$S.Procs.Add((New-FakeProc 1002 'csrss.exe' '\??\C:\WINDOWS\system32\csrss.exe'))
+  Eq (Invoke-Prepare) 0 'H10 rc'
+  Eq @(Kills).Count 0 'H10 a process without a readable path is not ended'
+}
+Invoke-Case 'h10-unreadable-path-locked' {
+  Initialize-FakeInstall
+  [IO.File]::WriteAllText((Join-Path $app "tools\$($script:HelperExe)"), 'x')
+  $S.Locked = @($script:HelperExe)
+  [void]$S.Procs.Add((New-FakeProc 1011 $script:HelperExe ''))
+  Eq (Invoke-Prepare) 7 'H10 the lock check decides: rc 7'
+  Eq @(Kills).Count 0 'H10 still not ended'
+  Test-NoBackup
+}
+Invoke-Case 'self-chain-kept' {
+  Initialize-FakeInstall
+  $parent = 999001
+  [void]$S.Procs.Add((New-FakeProc $PID 'powershell.exe' "$app\powershell.exe" $parent))
+  [void]$S.Procs.Add((New-FakeProc $parent 'arbs-h-0.1.2-setup.exe' "$app\arbs-h-0.1.2-setup.exe" 4))
+  [IO.File]::WriteAllText((Join-Path $app 'arbs-h-0.1.2-setup.exe'), 'x')
+  $S.Locked = @('arbs-h-0.1.2-setup.exe')
+  Eq (Invoke-Prepare) 0 'setup.exe inside {app}: rc 0'
+  Eq @(Kills).Count 0 'this helper and its parents are never ended'
+}
+Invoke-Case 'dryrun-no-real-process-query' {
+  Eq @(Get-ProcessSnapshot).Count 0 'DryRun without an injected list sees no process'
+}
+Invoke-Case 'h11-real-query-by-path' {
+  # Neutral copies of ping.exe that end by themselves: this test never ends a process.
+  $name = 'arbs-fix1-probe.exe'
+  $mine = Join-Path $app 'tools'; $other = Join-Path $root 'Other\tools'
+  New-Item -ItemType Directory -Path $mine, $other -Force | Out-Null
+  Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\PING.EXE') -Destination (Join-Path $mine $name)
+  Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\PING.EXE') -Destination (Join-Path $other $name)
+  $pa = Start-Process -FilePath (Join-Path $mine $name) -ArgumentList '-n', '6', '127.0.0.1' -WindowStyle Hidden -PassThru
+  $pb = Start-Process -FilePath (Join-Path $other $name) -ArgumentList '-n', '6', '127.0.0.1' -WindowStyle Hidden -PassThru
+  try {
+    Start-Sleep -Milliseconds 900
+    $script:ProcessLister = { Get-RealProcessSnapshot }
+    $found = @(Get-AppProcesses)
+    Eq $found.Count 1 'H11 real query: one process under {app}'
+    Ok ($found.Count -eq 1 -and $found[0].Id -eq $pa.Id) 'H11 real query: the copy in {app}, not the one elsewhere'
+    Ok (@(Get-RealProcessSnapshot | Where-Object { $_.Id -eq $pb.Id }).Count -eq 1) 'H11 the other copy is visible but not selected'
+    Ok (@(Get-BusyAppFiles) -contains $name) 'H11 real running exe reads as locked'
+  }
+  finally { [void]$pa.WaitForExit(20000); [void]$pb.WaitForExit(20000) }
+  Ok ($pa.HasExited -and $pb.HasExited) 'H11 both copies ended by themselves'
+  Start-Sleep -Milliseconds 300
+  Eq @(Get-BusyAppFiles).Count 0 'H11 not locked after exit'
+}
+Invoke-Case 'h12-taskkill-filter' {
+  # Name filter that does not match: taskkill must leave the process alone. The matching case is not run (no real kill).
+  $exe = Join-Path $root 'arbs-fix1-filter.exe'
+  Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\PING.EXE') -Destination $exe
+  $p = Start-Process -FilePath $exe -ArgumentList '-n', '6', '127.0.0.1' -WindowStyle Hidden -PassThru
+  try {
+    Start-Sleep -Milliseconds 700
+    $tk = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\taskkill.exe') -ArgumentList '/F', '/PID', "$($p.Id)", '/FI', '"IMAGENAME eq arbs-fix1-other.exe"' -NoNewWindow -Wait -PassThru `
+      -RedirectStandardOutput (Join-Path $root 'tk.out') -RedirectStandardError (Join-Path $root 'tk.err')
+    Start-Sleep -Milliseconds 400
+    Ok (-not $p.HasExited) "H12 /PID + /FI with another image name does not end it (taskkill exit $($tk.ExitCode))"
+  }
+  finally { [void]$p.WaitForExit(20000) }
+  Ok $p.HasExited 'H12 probe ended by itself'
+}
+Invoke-Case 'h13-helper-ascii' {
+  Eq @([IO.File]::ReadAllBytes($Helper) | Where-Object { $_ -gt 127 }).Count 0 'H13 arbs-h-setup.ps1 stays ASCII'
+}
+
 # ---------------- T5 rollback ----------------
 foreach ($r in @(
     @{ N = 'auto-running'; Start = 2; Delayed = $false; State = 'RUNNING'; Cmd = 'auto'; Start2 = $true },
@@ -598,6 +873,36 @@ $refused = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 Eq $refused 1 'CLI -DryRun with a real path is refused'
 Ok (-not (Test-Path -LiteralPath (Join-Path $cli 'x.txt'))) 'refused run wrote nothing'
+
+# R1b-fix1 G1: the installer reads rc 7 and busy= from this exact CLI path. The lock is a ping copy that ends by itself.
+$cli2 = Join-Path $Scratch 'cli-prepare'
+$cli2App = Join-Path $cli2 'app'; $cli2Data = Join-Path $cli2 'ProgramData\ARBS-H'
+New-Item -ItemType Directory -Path (Join-Path $cli2App 'tools'), (Join-Path $cli2App 'config') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $cli2App 'arbs-h-version.txt'), '0.1.2')
+[IO.File]::WriteAllText((Join-Path $cli2App 'config\sunshine.conf'), 'cfg')
+$fake2 = @(
+  @{ match = '^sc\.exe qc ARBSHService'; exit = 0; output = "START_TYPE         : 2   AUTO_START`r`nBINARY_PATH_NAME   : `"$($cli2App.Replace('\', '\\'))\\tools\\sunshinesvc.exe`"" },
+  @{ match = '^sc\.exe query ARBSHService'; exit = 0; output = 'STATE              : 1  STOPPED' },
+  @{ match = '^sc\.exe (qc|query) ApolloService'; exit = 1060; output = '1060' })
+($fake2 | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $cli2 'fake.json') -Encoding UTF8
+$lockExe = Join-Path $cli2App 'tools\arbs-fix1-cli.exe'
+Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\PING.EXE') -Destination $lockExe
+$resFile = Join-Path $cli2 'prepare.txt'
+$pLock = Start-Process -FilePath $lockExe -ArgumentList '-n', '8', '127.0.0.1' -WindowStyle Hidden -PassThru
+try {
+  Start-Sleep -Milliseconds 700
+  & $ps -NoProfile -ExecutionPolicy Bypass -File $Helper -Action prepare -DryRun -FakeRoot $cli2 -AppDir $cli2App -DataRoot $cli2Data -ResultOut $resFile | Out-Null
+  $prepRc = $LASTEXITCODE
+  $stillRunning = -not $pLock.HasExited
+}
+finally { [void]$pLock.WaitForExit(20000) }
+Eq $prepRc 7 'CLI prepare with a locked exe exits 7'
+Ok $stillRunning 'CLI prepare ended no process (DryRun)'
+$resLines = @(Get-Content -LiteralPath $resFile)
+Ok ($resLines -contains 'service-before=STOPPED') 'CLI result has service-before'
+Ok ($resLines -contains 'busy=arbs-fix1-cli.exe') 'CLI result has busy=<file name>'
+Ok ($resLines -contains 'prepare=app-busy') 'CLI result has prepare=app-busy'
+Ok (-not (Test-Path -LiteralPath (Join-Path $cli2Data 'backup'))) 'CLI rc 7: no backup'
 
 Eq $global:T_RealExec 0 'real process starts in all cases'
 Write-Host ("arbs-h setup helper tests: {0} passed, {1} failed (scratch {2})" -f $global:T_Pass, $global:T_Fail, $Scratch)

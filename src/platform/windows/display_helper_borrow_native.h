@@ -1,5 +1,6 @@
 #pragma once
 
+#include "src/platform/windows/arbs_h_names.h"
 #include "src/platform/windows/display_helper_borrow_gate.h"
 
 #ifdef _WIN32
@@ -71,7 +72,7 @@ namespace display_helper::borrow {
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) return nullptr;
     SECURITY_ATTRIBUTES attributes {sizeof(attributes), descriptor, FALSE};
-    HANDLE mutex = CreateMutexW(&attributes, FALSE, L"Global\\SunshineDisplayHelperMutationV1");
+    HANDLE mutex = CreateMutexW(&attributes, FALSE, ARBS_H_DISPLAY_HELPER_MUTATION_MUTEX_W);
     LocalFree(descriptor);
     return mutex;
   }

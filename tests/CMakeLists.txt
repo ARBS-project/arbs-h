@@ -741,6 +741,9 @@ sunshine_register_component(NAME test_component_paused_app_monitor TEST_SOURCE u
     LINK_LIBRARIES Threads::Threads Boost::property_tree OpenSSL::Crypto)
 sunshine_register_component(NAME test_component_display_helper_request_policy TEST_SOURCE unit/test_display_helper_request_policy.cpp
     PRODUCT_SOURCES "${SUNSHINE_TEST_REPOSITORY_ROOT}/src/platform/windows/display_helper_request_policy.cpp")
+if(WIN32)
+    sunshine_register_component(NAME test_component_display_helper_process_match TEST_SOURCE unit/platform/windows/test_display_helper_process_match.cpp)
+endif()
 sunshine_register_component(NAME test_component_remote_display_topology TEST_SOURCE unit/test_remote_display_topology.cpp
     PRODUCT_SOURCES "${SUNSHINE_TEST_REPOSITORY_ROOT}/src/remote_display_topology.cpp"
     LINK_LIBRARIES nlohmann_json::nlohmann_json)

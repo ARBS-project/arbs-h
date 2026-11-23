@@ -32,3 +32,10 @@
 
 /// Logon trigger id inside that task (was VibepolloDisplayHelperLogonTrigger).
 #define ARBS_H_DISPLAY_RESTORE_TRIGGER_W L"ARBSHDisplayHelperLogonTrigger"
+
+/// Display helper single-instance mutex (R1b-fix1 G4, was Global/Local SunshineDisplayHelper, shared with Vibepollo).
+#define ARBS_H_DISPLAY_HELPER_MUTEX_GLOBAL_W L"Global\\ARBS-H-DisplayHelper"
+#define ARBS_H_DISPLAY_HELPER_MUTEX_LOCAL_W L"Local\\ARBS-H-DisplayHelper"
+
+/// Machine-wide display mutation mutex of helper and host (R1b-fix1 G4, was Global SunshineDisplayHelperMutationV1).
+#define ARBS_H_DISPLAY_HELPER_MUTATION_MUTEX_W L"Global\\ARBS-H-DisplayHelperMutationV1"

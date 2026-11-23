@@ -612,9 +612,9 @@ namespace display_helper_paths {
   }
 
   inline bool ensure_single_instance(HANDLE &out_handle) {
-    out_handle = make_named_mutex(L"Global\\SunshineDisplayHelper");
+    out_handle = make_named_mutex(ARBS_H_DISPLAY_HELPER_MUTEX_GLOBAL_W);
     if (!out_handle && GetLastError() == ERROR_ACCESS_DENIED) {
-      out_handle = make_named_mutex(L"Local\\SunshineDisplayHelper");
+      out_handle = make_named_mutex(ARBS_H_DISPLAY_HELPER_MUTEX_LOCAL_W);
     }
     if (!out_handle) {
       return true;  // continue; best-effort singleton failed

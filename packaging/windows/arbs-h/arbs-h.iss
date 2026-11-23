@@ -106,6 +106,7 @@ var
   IdxStop, IdxMigrate, IdxUsbip, IdxSudo: Integer;
   PlanKeys, PlanVals: TArrayOfString;
   PlanOk, IsUpgrade, KeepConfig, RestoreVibe: Boolean;
+  ServiceWasRunning, PostInstallRan: Boolean;
 
 procedure LoadKeyValues(const FileName: String; var Keys, Vals: TArrayOfString);
 var
@@ -240,24 +241,56 @@ begin
   end;
 end;
 
+// R1b-fix1 G1: a stopped update must not leave the host without its service. Calls sc.exe directly because {tmp}
+// may already be gone when Setup is closing.
+procedure StartServiceAgain;
+var
+  Code: Integer;
+begin
+  if not ServiceWasRunning then
+    exit;
+  if not Exec(ExpandConstant('{sys}\sc.exe'), 'start ARBSHService', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Code := -1;
+  Log('ARBS-H: service start after stopped setup -> ' + IntToStr(Code));
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  Script: String;
+  Script, ResFile, Before: String;
   Code: Integer;
+  RK, RV: TArrayOfString;
 begin
   Result := '';
   Script := ExpandConstant('{tmp}\') + HelperName;
-  Code := RunHelper(Script, '-Action prepare ' + CommonArgs);
+  ResFile := ExpandConstant('{tmp}\arbs-h-prepare.txt');
+  DeleteFile(ResFile);
+  Code := RunHelper(Script, '-Action prepare ' + CommonArgs + ' -ResultOut "' + ResFile + '"');
+  LoadKeyValues(ResFile, RK, RV);
+  Before := ValueOf(RK, RV, 'service-before');
+  // Stays True once set: this page can run again after Back.
+  if (Before = 'RUNNING') or (Before = 'START_PENDING') then
+    ServiceWasRunning := True;
+  if Code = 7 then
+  begin
+    Result := 'ARBS-H 프로그램이 아직 실행 중이라 파일을 바꿀 수 없습니다. 아무 파일도 바꾸지 않았습니다. ' +
+      'PC를 다시 시작한 뒤 설치 파일을 다시 실행하세요. 남은 파일: ' + ValueOf(RK, RV, 'busy') + '. 로그: ' + LogDir;
+    StartServiceAgain;
+    exit;
+  end;
   if Code <> 0 then
   begin
     Result := 'ARBS-H 서비스 정지 또는 기존 설정 백업에 실패했습니다(코드 ' + IntToStr(Code) + '). 로그: ' + LogDir;
+    StartServiceAgain;
     exit;
   end;
   if OptChecked(IdxStop) then
   begin
     Code := RunHelper(Script, '-Action stop-vibepollo -VibepolloStopApproved ' + CommonArgs);
     if Code <> 0 then
+    begin
       Result := 'Vibepollo 서비스를 멈추지 못했습니다(코드 ' + IntToStr(Code) + '). 아무 파일도 설치하지 않았습니다. 로그: ' + LogDir;
+      StartServiceAgain;
+    end;
   end;
 end;
 
@@ -269,6 +302,8 @@ var
 begin
   if CurStep <> ssPostInstall then
     exit;
+  // From here post-install decides the service state (rc 6 and 10 leave it manual on purpose).
+  PostInstallRan := True;
   ResFile := ExpandConstant('{tmp}\arbs-h-result.txt');
   Args := '-Action post-install ' + CommonArgs + ' -ResultOut "' + ResFile + '"';
   if OptChecked(IdxMigrate) then
@@ -295,6 +330,13 @@ begin
     SuppressibleMsgBox(Msg, mbInformation, MB_OK, IDOK)
   else
     SuppressibleMsgBox(Msg, mbError, MB_OK, IDOK);
+end;
+
+// Called on every exit, including Cancel during the file copy.
+procedure DeinitializeSetup;
+begin
+  if not PostInstallRan then
+    StartServiceAgain;
 end;
 
 function InitializeUninstall(): Boolean;

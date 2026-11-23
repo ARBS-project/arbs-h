@@ -43,6 +43,7 @@
   #include "src/globals.h"
   #include "src/logging.h"
   #include "src/platform/windows/display_helper_coordinator.h"
+  #include "src/platform/windows/display_helper_process_match.h"
   #include "src/platform/windows/display_helper_request_helpers.h"
   #include "src/platform/windows/frame_limiter_nvcp.h"
   #include "src/platform/windows/impersonating_display_device.h"
@@ -796,6 +797,14 @@ namespace {
       return false;
     }
 
+    // R1b-fix1 G4: only the helper of this install. Vibepollo and Apollo use the same file name in other folders.
+    const auto own_helper = display_helper_process_match::current_helper_path();
+    if (!own_helper) {
+      BOOST_LOG(warning) << "Display helper: own path unavailable; leaving other helper processes running.";
+      return !cancellation_requested(cancellation_predicate) &&
+             !operation_deadline_expired(operation_deadline);
+    }
+
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
       DWORD err = GetLastError();
@@ -828,11 +837,20 @@ namespace {
           operation_deadline_expired(operation_deadline)) {
         return false;
       }
-      HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE | PROCESS_QUERY_INFORMATION, FALSE, pid);
+      // One handle for the path check and the termination, so a reused PID cannot slip between them.
+      HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
       if (!h) {
         DWORD err = GetLastError();
         BOOST_LOG(warning) << "Display helper: unable to open external instance (pid=" << pid
                            << ", winerr=" << err << ") for termination.";
+        continue;
+      }
+
+      const auto image_path = display_helper_process_match::query_process_image_path(h);
+      if (!display_helper_process_match::should_terminate(pid, GetCurrentProcessId(), image_path, *own_helper)) {
+        BOOST_LOG(info) << "Display helper: leaving pid=" << pid
+                        << (image_path ? " running (another install)." : " running (path unavailable).");
+        CloseHandle(h);
         continue;
       }
 

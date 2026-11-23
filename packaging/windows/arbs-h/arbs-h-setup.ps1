@@ -60,6 +60,10 @@ $script:BackupKeep = 3
 $script:Plan = New-Object System.Collections.Generic.List[string]
 $script:Runner = $null
 $script:AclReader = $null   # tests inject { param($Path) <SDDL> } (the fake runner does not model icacls)
+$script:ProcessLister = $null   # tests inject a list of { Id; ParentId; Name; Path }
+$script:FileBusyProbe = $null   # tests inject { param($Path) <$true when locked> }
+$script:HelperImage = 'sunshine_display_helper.exe'
+$script:RestoreWaitSeconds = 20
 $script:RealExecCount = 0
 $script:LogFile = $null
 $script:Result = [ordered]@{}
@@ -544,12 +548,164 @@ function Invoke-Start {
   return 0
 }
 
+# ---------------------------------------------------------------------------------------------------------------
+# R1b-fix1 G1: ARBS-H processes that outlive the service. sunshine.exe starts the display helper outside the service
+# job and does not end it, so stopping ARBSHService can leave tools\sunshine_display_helper.exe locked. Processes are
+# chosen by full executable path under -AppDir, never by name: Vibepollo and Apollo ship the same file names.
+# ---------------------------------------------------------------------------------------------------------------
+function Get-RealProcessSnapshot {
+  try {
+    return @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, Name, ExecutablePath -ErrorAction Stop |
+        ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; ParentId = [int]$_.ParentProcessId; Name = [string]$_.Name; Path = [string]$_.ExecutablePath } })
+  }
+  catch { Write-Log "process list failed: $($_.Exception.Message)"; return @() }
+}
+
+# DryRun and plan never query this PC's processes unless a test injects a list.
+function Get-ProcessSnapshot {
+  if ($script:ProcessLister) { return @(& $script:ProcessLister) }
+  if ($DryRun -or $PlanOnly) { return @() }
+  return @(Get-RealProcessSnapshot)
+}
+
+# This helper and its parents (setup.tmp, setup.exe) are never stopped, even when setup.exe sits inside the folder.
+function Get-SelfChainIds($All) {
+  $byId = @{}
+  foreach ($p in @($All)) { $byId[[int]$p.Id] = $p }
+  $ids = @{}
+  $cur = [int]$PID
+  for ($i = 0; $i -lt 32; $i++) {
+    if ($ids.ContainsKey($cur)) { break }
+    $ids[$cur] = $true
+    if (-not $byId.ContainsKey($cur)) { break }
+    $cur = [int]$byId[$cur].ParentId
+    if ($cur -le 0) { break }
+  }
+  return $ids
+}
+
+# System processes can report paths GetFullPath refuses (\??\C:\...): those are simply not inside the folder.
+function Test-InAppDir([string]$Path) {
+  if (-not $Path) { return $false }
+  try { return (Test-UnderRoot $Path $AppDir) } catch { return $false }
+}
+
+function Get-AppProcesses {
+  $all = @(Get-ProcessSnapshot)
+  $self = Get-SelfChainIds $all
+  return @($all | Where-Object { -not $self.ContainsKey([int]$_.Id) -and (Test-InAppDir $_.Path) })
+}
+
+# True when the file cannot be opened for exclusive write (a running image or loaded DLL). Content is not changed.
+# A read-only file cannot be opened for write whether it is in use or not, so it is not reported.
+function Test-FileBusy([string]$Path) {
+  if ($script:FileBusyProbe) { return [bool](& $script:FileBusyProbe $Path) }
+  try {
+    if ((Get-Item -LiteralPath $Path -Force).IsReadOnly) { return $false }
+    $s = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $s.Dispose()
+    return $false
+  }
+  catch [IO.FileNotFoundException] { return $false }
+  catch [Management.Automation.ItemNotFoundException] { return $false }
+  catch { return $true }
+}
+
+# exe/dll directly in {app} and {app}\tools, without the files of this helper's own parent chain.
+function Get-BusyAppFiles {
+  $all = @(Get-ProcessSnapshot)
+  $self = Get-SelfChainIds $all
+  $own = @($all | Where-Object { $self.ContainsKey([int]$_.Id) -and $_.Path } | ForEach-Object { $_.Path })
+  $busy = @()
+  foreach ($dir in @($AppDir, (Join-Path $AppDir 'tools'))) {
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Force -ErrorAction SilentlyContinue | Where-Object { @('.exe', '.dll') -contains $_.Extension.ToLowerInvariant() })) {
+      if ($own -icontains $f.FullName) { continue }
+      if (Test-FileBusy $f.FullName) { $busy += $f.Name }
+    }
+  }
+  return $busy
+}
+
+# Only a folder that really is an ARBS-H install: never a drive root, and only with our version file or our service.
+function Test-AppFolderIsOurs($Own) {
+  $full = [IO.Path]::GetFullPath($AppDir).TrimEnd('\')
+  if ($full -ieq ([IO.Path]::GetPathRoot($full).TrimEnd('\'))) { return $false }
+  if (Test-Path -LiteralPath (Join-Path $AppDir 'arbs-h-version.txt') -PathType Leaf) { return $true }
+  return ($Own.Installed -and (Test-InAppDir (Get-ExeFromBinaryPath $Own.BinaryPath)))
+}
+
+function Stop-OneProcess($P) {
+  # No /T: a child can be a game. /FI keeps a reused PID with another image name from being ended.
+  [void](Invoke-Ext 'taskkill.exe' ('/F /PID {0} /FI "IMAGENAME eq {1}"' -f $P.Id, $P.Name))
+}
+
+# After the other ARBS-H processes are gone the helper may be restoring the display (its 5 s grace, then the restore).
+function Wait-DisplayRestore {
+  if (@(Get-AppProcesses | Where-Object { $_.Name -ieq $script:HelperImage }).Count -eq 0) { return }
+  $task = Invoke-Ext 'schtasks.exe' ('/Query /TN {0}' -f (Quote $script:RestoreTask))
+  if ($task.ExitCode -ne 0) { return }
+  Write-Log 'display restore task present: waiting for the helper to finish'
+  for ($i = 0; $i -lt $script:RestoreWaitSeconds; $i++) {
+    if (@(Get-AppProcesses | Where-Object { $_.Name -ieq $script:HelperImage }).Count -eq 0) { Write-Log 'helper ended by itself'; return }
+    Wait-Short 1000
+  }
+}
+
+# 0 = nothing left that blocks the file copy, 2 = service will not stop, 7 = still running or locked (nothing changed).
+function Stop-AppProcesses($Own) {
+  if (-not (Test-AppFolderIsOurs $Own)) { Set-Result 'app-processes' 'skipped-not-arbs-folder'; return 0 }
+  $procs = @(Get-AppProcesses)
+  $busy = @(Get-BusyAppFiles)
+  if ($procs.Count -eq 0 -and $busy.Count -eq 0) { Set-Result 'app-processes' 'none'; return 0 }
+  $apollo = Get-ServiceInfo $script:VibepolloService
+  if ($apollo.Installed -and (Test-InAppDir (Get-ExeFromBinaryPath $apollo.BinaryPath))) {
+    Set-Result 'app-processes' 'skipped-apollo-in-folder'
+    return 0
+  }
+  $stopped = 0
+  $waited = $false
+  for ($try = 1; $try -le 3; $try++) {
+    $svc = Get-ServiceInfo $script:ServiceName
+    if ($svc.Installed -and $svc.State -ne 'STOPPED') {
+      Write-Log "service came back ($($svc.State)): stopping it again"
+      [void](Invoke-Ext 'sc.exe' ('stop {0}' -f $script:ServiceName))
+      if (-not (Wait-ServiceState $script:ServiceName 'STOPPED' 60)) { Set-Result 'prepare' 'stop-timeout'; return 2 }
+    }
+    $procs = @(Get-AppProcesses)
+    if ($procs.Count -eq 0) { break }
+    # A surviving sunshine.exe would start the helper again, so it goes first.
+    foreach ($p in @($procs | Where-Object { $_.Name -ine $script:HelperImage })) { Stop-OneProcess $p; $stopped++ }
+    if (-not $waited) { $waited = $true; Wait-DisplayRestore }
+    foreach ($p in @(Get-AppProcesses | Where-Object { $_.Name -ieq $script:HelperImage })) { Stop-OneProcess $p; $stopped++ }
+    Wait-Short 1000
+  }
+  $left = @(Get-AppProcesses)
+  $busy = @(Get-BusyAppFiles)
+  for ($i = 0; $i -lt 4 -and $left.Count -eq 0 -and $busy.Count -gt 0; $i++) {
+    Wait-Short 1000
+    $left = @(Get-AppProcesses)
+    $busy = @(Get-BusyAppFiles)
+  }
+  if ($left.Count -gt 0 -or $busy.Count -gt 0) {
+    $names = @(@($left | ForEach-Object { $_.Name }) + @($busy) | Select-Object -Unique)
+    Set-Result 'busy' ($names -join ',')
+    Set-Result 'prepare' 'app-busy'
+    return 7
+  }
+  Set-Result 'app-processes' ("stopped $stopped")
+  return 0
+}
+
 function Invoke-Prepare {
   $own = Get-ServiceInfo $script:ServiceName
+  Set-Result 'service-before' $own.State
   if ($own.Installed -and $own.State -ne 'STOPPED') {
     [void](Invoke-Ext 'sc.exe' ('stop {0}' -f $script:ServiceName))
     if (-not (Wait-ServiceState $script:ServiceName 'STOPPED' 60)) { Set-Result 'prepare' 'stop-timeout'; return 2 }
   }
+  $stop = Stop-AppProcesses $own
+  if ($stop -ne 0) { return $stop }
   $config = Join-Path $AppDir 'config'
   if (Test-Path -LiteralPath (Join-Path $config 'sunshine.conf')) {
     $old = 'unknown'

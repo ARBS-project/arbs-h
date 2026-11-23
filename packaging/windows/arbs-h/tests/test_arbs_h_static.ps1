@@ -28,7 +28,8 @@ function Count-String([byte[]]$Bytes, [string]$Text) {
 }
 
 $forbidden = @('ApolloService', '\Vibepollo\Logs', 'Nonary\Vibepollo\DisplayHelper', 'VibepolloDisplayRestore',
-  'VibepolloDisplayHelperLogonTrigger', 'api.github.com/repos/Nonary', 'VibepolloSetup')
+  'VibepolloDisplayHelperLogonTrigger', 'api.github.com/repos/Nonary', 'VibepolloSetup',
+  'Global\SunshineDisplayHelper', 'Local\SunshineDisplayHelper')
 $binaries = @('sunshine.exe', 'tools\sunshinesvc.exe', 'tools\sunshine_display_helper.exe')
 $bytes = @{}
 foreach ($b in $binaries) {
@@ -45,6 +46,11 @@ Ok ((Count-String $bytes['sunshine.exe'] 'ARBS-H-DisplayRestore') -gt 0) 'sunshi
 Ok ((Count-String $bytes['tools\sunshine_display_helper.exe'] 'SOFTWARE\ARBS-H\DisplayHelper') -gt 0) 'display helper uses HKLM SOFTWARE\ARBS-H\DisplayHelper'
 Ok ((Count-String $bytes['tools\sunshine_display_helper.exe'] 'ARBS-H-DisplayRestore') -gt 0) 'display helper uses task ARBS-H-DisplayRestore'
 Ok ((Count-String $bytes['sunshine.exe'] 'api.github.com/repos/arbs-project/arbs-h') -gt 0) 'sunshine.exe update target arbs-project/arbs-h'
+# R1b-fix1 G4: helper mutexes are ARBS-H only.
+Ok ((Count-String $bytes['tools\sunshine_display_helper.exe'] 'Global\ARBS-H-DisplayHelper') -gt 0) 'display helper uses its own single-instance mutex'
+Ok ((Count-String $bytes['tools\sunshine_display_helper.exe'] 'Local\ARBS-H-DisplayHelper') -gt 0) 'display helper uses its own local mutex'
+Ok ((Count-String $bytes['tools\sunshine_display_helper.exe'] 'Global\ARBS-H-DisplayHelperMutationV1') -gt 0) 'display helper uses its own mutation mutex'
+Ok ((Count-String $bytes['sunshine.exe'] 'Global\ARBS-H-DisplayHelperMutationV1') -gt 0) 'sunshine.exe uses the same mutation mutex'
 Ok ((Count-String $bytes['sunshine.exe'] 'arbs-h-') -gt 0) 'sunshine.exe Windows asset rule arbs-h-<ver>-setup.exe'
 
 # Both UIs: legacy at / and the new one at /v2. assets\changelog.json is excluded on purpose: it is the bundled
@@ -98,6 +104,32 @@ Ok ($noticeText.Contains('https://github.com/nefarius/nefcon') -and $noticeText.
 Ok ($noticeText.Contains('Vibepollo 2.18.9') -and $noticeText.Contains('source commit of this binary is not confirmed')) 'NOTICE states the SudoVDA binary origin'
 $svSigner = (Get-AuthenticodeSignature -LiteralPath (Join-Path $StageDir 'drivers\sudovda\SudoVDA.dll')).SignerCertificate
 Ok ($null -ne $svSigner -and $svSigner.Thumbprint -eq '3C918FC73525AD8B1521B6DB26B71F694277CC49' -and $noticeText.Contains($svSigner.Thumbprint)) 'SudoVDA signer matches the NOTICE thumbprint'
+# R1b-fix1 G4: helper cleanup chooses by full path, and no source keeps the shared mutex names.
+$srcRoot = Join-Path $pkg '..\..\..'
+$integration = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\platform\windows\display_helper_integration.cpp'))
+Ok ($integration.Contains('display_helper_process_match::should_terminate(pid, GetCurrentProcessId(), image_path, *own_helper)')) 'helper cleanup decides by image path'
+$cleanup = $integration.Substring($integration.IndexOf('bool kill_all_helper_processes('), 3600)
+Ok ($cleanup.IndexOf('should_terminate') -gt 0 -and $cleanup.IndexOf('should_terminate') -lt $cleanup.IndexOf('TerminateProcess(h, 1)')) 'path check comes before TerminateProcess'
+foreach ($f in @('tools\display_helper_paths.h', 'tools\display_settings_helper.cpp', 'src\platform\windows\display_helper_borrow_native.h')) {
+  Ok (-not ([IO.File]::ReadAllText((Join-Path $srcRoot $f)).Contains('SunshineDisplayHelper'))) "$f has no shared mutex name"
+}
+
+# R1b-fix1 G1 (H13): running ARBS-H processes are handled before any file changes; a stopped setup brings the service back.
+$helperText = [IO.File]::ReadAllText((Join-Path $pkg 'arbs-h-setup.ps1'))
+Ok (@([IO.File]::ReadAllBytes((Join-Path $pkg 'arbs-h-setup.ps1')) | Where-Object { $_ -gt 127 }).Count -eq 0) 'arbs-h-setup.ps1 is ASCII'
+$prep = $helperText.Substring($helperText.IndexOf('function Invoke-Prepare {'))
+Ok ($prep.IndexOf('Stop-AppProcesses') -gt 0 -and $prep.IndexOf('Stop-AppProcesses') -lt $prep.IndexOf('robocopy.exe')) 'prepare stops processes before the backup'
+Ok ($helperText.Contains('/F /PID {0} /FI "IMAGENAME eq {1}"') -and $helperText -notmatch "taskkill\.exe'[^\r\n]*/T\b") 'taskkill by PID + image name, no /T'
+Ok ($helperText.Contains('Test-UnderRoot $Path $AppDir')) 'process choice is by path under the install folder'
+$prepIss = $iss.Substring($iss.IndexOf('function PrepareToInstall'), $iss.IndexOf('procedure CurStepChanged') - $iss.IndexOf('function PrepareToInstall'))
+Ok ($prepIss.Contains("'-Action prepare ' + CommonArgs + ' -ResultOut")) 'iss: prepare writes a result file'
+Ok ($prepIss -match 'Code = 7') 'iss: prepare handles rc 7'
+Ok ($prepIss.Contains('StartServiceAgain') -and $prepIss.Contains("'service-before'")) 'iss: failed prepare brings the service back'
+Ok ($iss -match '(?s)procedure DeinitializeSetup;.*?if not PostInstallRan then\s+StartServiceAgain') 'iss: cancel brings the service back'
+Ok ($iss -match "(?s)CurStep <> ssPostInstall then\s+exit;.*?PostInstallRan := True") 'iss: post-install owns the service state'
+Ok ($iss.Contains("ExpandConstant('{sys}\sc.exe')")) 'iss: service restart does not depend on {tmp}'
+Ok ($iss -match 'CloseApplications=no') 'iss: Restart Manager stays off (path-based stop only)'
+
 Ok (Test-Path -LiteralPath $SetupExe) 'setup.exe exists'
 $shaFile = "$SetupExe.sha256"
 Ok (Test-Path -LiteralPath $shaFile) 'setup.exe.sha256 exists'
