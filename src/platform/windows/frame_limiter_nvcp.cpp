@@ -9,6 +9,7 @@
 
   #include "nvapi_driver_settings.h"
   #include "src/logging.h"
+  #include "src/platform/windows/arbs_h_names.h"
 
   #include <algorithm>
   #include <cstdint>
@@ -525,7 +526,7 @@ namespace platf::frame_limiter_nvcp {
         return std::nullopt;
       }
 
-      cached = base / L"Sunshine";
+      cached = base / ARBS_H_PROGRAMDATA_DIR_W;  // H013 N8: was the shared %ProgramData%\Sunshine
       return cached;
     }
 

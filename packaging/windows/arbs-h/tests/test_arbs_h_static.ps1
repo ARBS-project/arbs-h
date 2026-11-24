@@ -11,7 +11,9 @@ param(
   [Parameter(Mandatory = $true)][string]$StageDir,
   [Parameter(Mandatory = $true)][string]$SetupExe,
   [string]$UninstallKeysFile = '',
-  [string]$Version = '0.1.0'
+  [string]$Version = '0.1.3',
+  # H013 S11: commit the H013 changes start from (0.1.2 = v0.1.2 = 8967d7c87).
+  [string]$BaseCommit = '8967d7c87046c372e80912636c68b78d08024dc9'
 )
 $ErrorActionPreference = 'Stop'
 $pkg = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -129,6 +131,107 @@ Ok ($iss -match '(?s)procedure DeinitializeSetup;.*?if not PostInstallRan then\s
 Ok ($iss -match "(?s)CurStep <> ssPostInstall then\s+exit;.*?PostInstallRan := True") 'iss: post-install owns the service state'
 Ok ($iss.Contains("ExpandConstant('{sys}\sc.exe')")) 'iss: service restart does not depend on {tmp}'
 Ok ($iss -match 'CloseApplications=no') 'iss: Restart Manager stays off (path-based stop only)'
+
+# ---------------- H013 O6: names that collided with Vibepollo / Apollo / Sunshine (analysis/H013.md 6) ----------------
+function Known([string]$Item, [string]$Reason) { Write-Host "known exception, deferred (EA-H013-U-01): $Item - $Reason" }
+# S1/S2 built binaries: old shared names gone, own names present.
+$nameBinaries = @('sunshine.exe', 'tools\sunshine_display_helper.exe', 'tools\playnite-launcher.exe', 'tools\sunshine_wgc_capture.exe')
+foreach ($b in $nameBinaries) {
+  $path = Join-Path $StageDir $b
+  Ok (Test-Path -LiteralPath $path) "S1 stage has $b"
+  if (-not $bytes.ContainsKey($b)) { $bytes[$b] = [IO.File]::ReadAllBytes($path) }
+  foreach ($s in @('SunshineVirtualHdrActive', 'VibepolloPlayniteWatchdogCache', 'VibepolloPlayniteCleanupLease', 'VibeshinePresentTiming', 'sunshine-ca-bundle.pem')) {
+    Ok ((Count-String $bytes[$b] $s) -eq 0) "S1 $b contains no '$s'"
+  }
+}
+foreach ($s in @('Global\ARBS-H-VirtualHdrActive', 'Local\ARBS-H-VirtualHdrActive', 'ARBS-H-PresentTiming', 'arbs-h-ca-bundle.pem')) {
+  Ok ((Count-String $bytes['sunshine.exe'] $s) -gt 0) "S2 sunshine.exe uses '$s'"
+}
+foreach ($s in @('Local\ARBS-H-PlayniteWatchdogCache-v1', 'Local\ARBS-H-PlayniteCleanupLease-v1-')) {
+  Ok ((Count-String $bytes['tools\playnite-launcher.exe'] $s) -gt 0) "S2 playnite-launcher.exe uses '$s'"
+}
+# S3 sources: no shared per-user / ProgramData folder literal left where the H013 folders are used.
+$folderSources = @('src\platform\windows\nvprefs\nvprefs_interface.cpp', 'src\platform\windows\frame_limiter_nvcp.cpp',
+  'src\platform\windows\rtss_integration.cpp', 'tools\display_helper_paths.h', 'tools\display_settings_helper.cpp',
+  'tools\sunshine_wgc_capture.cpp', 'tools\playnite_launcher\launcher.cpp', 'tools\playnite_launcher\playnite_process.cpp',
+  'src\confighttp.cpp', 'src\confighttp_playnite.cpp')
+foreach ($f in $folderSources) {
+  $t = [IO.File]::ReadAllText((Join-Path $srcRoot $f))
+  Ok (-not ($t.Contains('L"Sunshine"') -or $t.Contains('"Sunshine"') -or $t.Contains('L"Vibepollo"'))) "S3 $f has no shared Sunshine/Vibepollo folder literal"
+}
+$names = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\platform\windows\arbs_h_names.h'))
+Ok ($names.Contains('#define ARBS_H_USER_DIR_W L"ARBS-H"')) 'S3 arbs_h_names.h: per-user folder ARBS-H'
+Ok (-not $names.Contains('Every Windows-global identity')) 'S3 arbs_h_names.h: old "every identity is its own" comment corrected'
+# S4 new shared names: every Global\ / Local\ literal and every pipe name in src\ and tools\ must be on this list.
+$allowedKernel = @(
+  @{ File = '*'; Name = '^(Global|Local)\\\\ARBS-H-'; Why = 'ARBS-H own name (arbs_h_names.h)' },
+  @{ File = 'src\platform\windows\dualsense_haptics.cpp'; Name = '^Local\\\\Vibepollo\.Haptics\.$'; Why = 'K3: prefix of a per-session random GUID name with an ACL' },
+  @{ File = 'tools\dualsense_haptics\*'; Name = '.'; Why = 'K23: test probes, not shipped (cmake/targets/windows.cmake)' })
+$allowedPipes = @(
+  @{ File = 'src\platform\windows\ipc\pipes.cpp'; Name = '^$'; Why = 'K6: prefix only, the name is a random GUID' },
+  @{ File = 'src\platform\windows\end_stream_hotkey.cpp'; Name = '^vibepollo_end_stream_$'; Why = 'K4: prefix of a random GUID name, FIRST_PIPE_INSTANCE' })
+$codeFiles = @(Get-ChildItem -LiteralPath (Join-Path $srcRoot 'src'), (Join-Path $srcRoot 'tools') -Recurse -File -Include '*.cpp', '*.h', '*.hpp', '*.c' -ErrorAction SilentlyContinue)
+$srcFull = [IO.Path]::GetFullPath($srcRoot).TrimEnd('\') + '\'
+$unknown = @()
+$seenKernel = 0; $seenPipes = 0
+foreach ($cf in $codeFiles) {
+  $rel = $cf.FullName.Substring($srcFull.Length)
+  $t = [IO.File]::ReadAllText($cf.FullName)
+  foreach ($m in [regex]::Matches($t, '"((?:Global|Local)\\\\[^"]*)"')) {
+    $seenKernel++
+    $ok = @($allowedKernel | Where-Object { ($rel -like $_.File) -and ($m.Groups[1].Value -match $_.Name) }).Count -gt 0
+    if (-not $ok) { $unknown += "$rel kernel object $($m.Groups[1].Value)" }
+  }
+  foreach ($m in [regex]::Matches($t, 'pipe\\{1,2}([A-Za-z0-9_.\-{}]*)\)?"')) {
+    $seenPipes++
+    $ok = @($allowedPipes | Where-Object { ($rel -like $_.File) -and ($m.Groups[1].Value -match $_.Name) }).Count -gt 0
+    if (-not $ok) { $unknown += "$rel pipe $($m.Groups[1].Value)" }
+  }
+}
+Ok ($seenKernel -ge 7 -and $seenPipes -ge 2) "S4 scan found the named objects ($seenKernel kernel, $seenPipes pipe literals)"
+Ok ($unknown.Count -eq 0) ("S4 no new shared object name" + $(if ($unknown.Count) { ': ' + ($unknown -join '; ') } else { '' }))
+foreach ($a in @($allowedKernel + $allowedPipes)) { Write-Host "allowed: $($a.File) $($a.Name) - $($a.Why)" }
+# Playnite connector (N17): still shared with Vibepollo on purpose (H013 D1). Listed, not judged.
+$ipc = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\platform\windows\playnite_ipc.cpp'))
+Known "pipe '$(if ($ipc -match 'kControlPipeName\[\] = "([^"]+)"') { $matches[1] } else { '?' })' (src\platform\windows\playnite_ipc.cpp)" 'the Playnite connector is one per Playnite; changing only the host side breaks the Vibepollo connector'
+Known 'plugin Id Sunshine.Playnite.Integration, plugin GUID, Extensions\SunshinePlaynite, assembly VibepolloPlaynite' 'C# connector and migration change + real Playnite test needed (separate task)'
+Known 'connector log %APPDATA%\Sunshine\logs\sunshine_playnite-* (ARBS_H_PLAYNITE_CONNECTOR_LOG_DIR_W)' 'written by the shared connector; ARBS-H only reads it'
+Ok ($names.Contains('#define ARBS_H_PLAYNITE_CONNECTOR_LOG_DIR_W L"Sunshine"')) 'S4 connector log folder is a named exception in arbs_h_names.h'
+# S5 Vulkan layer: only this install's own manifest paths are removed (N15).
+$misc = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\platform\windows\misc.cpp'))
+$manifest = $misc.Substring($misc.IndexOf('bool value_name_is_our_manifest('), 600)
+$manifest = $manifest.Substring(0, $manifest.IndexOf("`n    }") + 6)
+Ok (-not $manifest.Contains('.filename()') -and $manifest.Contains('vulkan_hdr_layer_manifest_path(layer)')) 'S5 value_name_is_our_manifest compares full own paths (no .filename())'
+# S6 display snapshot: the legacy %ProgramData%\Sunshine folder is never adopted (N10).
+$paths = [IO.File]::ReadAllText((Join-Path $srcRoot 'tools\display_helper_paths.h'))
+Ok (-not $paths.Contains('write_snapshot_locator(key, L"Sunshine")') -and -not $paths.Contains('name == L"Sunshine"')) 'S6 no legacy Sunshine snapshot folder adoption'
+# S7 Restart Manager is query only.
+Ok (-not ($helperText -match 'RmShutdown|RmRestart')) 'S7 arbs-h-setup.ps1 never calls RmShutdown/RmRestart'
+Ok ($helperText.Contains('RmGetList') -and $helperText.Contains('RmEndSession')) 'S7 lock owners are queried (RmGetList, session ended)'
+Ok ($helperText -match "elseif \(\`$DryRun -or \`$PlanOnly\) \{ Write-Log 'dry-run: lock owner query skipped'; return @\(\) \}") 'S7 DryRun never runs the Restart Manager (no Add-Type)'
+# S8 uninstall: processes end before the restore task is deleted (O3).
+$un = $helperText.Substring($helperText.IndexOf('function Invoke-Uninstall {'))
+$un = $un.Substring(0, $un.IndexOf("`n}") + 2)
+Ok ($un.IndexOf('Stop-AppProcesses') -gt 0 -and $un.IndexOf('Stop-AppProcesses') -lt $un.IndexOf("'schtasks.exe'") -and $un.IndexOf('Stop-AppProcesses') -lt $un.IndexOf("('delete {0}'")) 'S8 uninstall: Stop-AppProcesses before sc delete and the task delete'
+Ok ($un.IndexOf('Restore-ApolloService') -gt $un.IndexOf('catch { Write-Log "not removed:')) 'S8 uninstall: Vibepollo restore after a failed config delete'
+# S9 installer: rc 8 retry before any file copy, first service values kept, cause shown, uninstall leftovers shown.
+$prepIss = $iss.Substring($iss.IndexOf('function PrepareToInstall'), $iss.IndexOf('procedure CurStepChanged') - $iss.IndexOf('function PrepareToInstall'))
+Ok ($prepIss -match 'Code = 8' -and $prepIss.Contains('MB_RETRYCANCEL') -and $prepIss.Contains("ValueOf(RK, RV, 'locked-by')")) 'S9 iss: rc 8 asks to close the program and [Retry]'
+Ok ($prepIss -match '(?s)if \(not ServiceBeforeKnown\) and \(Before <> ''''\) then.*?ServiceBeforeKnown := True') 'S9/V4 iss: the first prepare values are kept'
+Ok ($iss.Contains("' -PrevStart `"' + ServiceStartBefore + '`" -PrevState `"' + ServiceStateBefore + '`"'")) 'S9 iss: post-install gets -PrevStart / -PrevState'
+Ok ($iss.Contains("Reason := ValueOf(RK, RV, 'reason');") -and $iss -match "Msg := '[^']*' \+ Reason;") 'S9 iss: post-install error shows the one-line reason'
+Ok ($iss -match '(?s)CurUninstallStep <> usPostUninstall.*?uninstall-left.*?locked-by.*?MsgBox') 'S9 iss: usPostUninstall tells what is left'
+Ok ($iss.Contains("-ResultOut `"' + UninstallResultFile")) 'S9 iss: uninstall writes its result to setup-logs'
+# S10 stage: the Vulkan HDR layer (old event names) is not shipped.
+Ok (@(Get-ChildItem -LiteralPath $StageDir -Recurse -File -Filter 'VkLayer_sunshine_hdr*' -ErrorAction SilentlyContinue).Count -eq 0) 'S10 stage has no VkLayer_sunshine_hdr*'
+# S11 commit range: no submodule, driver binary or generated token file.
+$git = Get-Command git.exe -ErrorAction SilentlyContinue
+if ($git) {
+  $changed = @(& $git.Source -C $srcRoot diff --name-only "$BaseCommit..HEAD") + @(& $git.Source -C $srcRoot diff --cached --name-only)
+  $bad = @($changed | Where-Object { $_ -match '^third-party/|^src_assets/windows/drivers/|tokens\.' })
+  Ok ($bad.Count -eq 0) ("S11 commit range $($BaseCommit.Substring(0, 9))..HEAD + index: no third-party/, drivers/, tokens.* (" + $changed.Count + ' files)' + $(if ($bad.Count) { ': ' + ($bad -join ', ') } else { '' }))
+}
+else { Ok $false 'S11 git.exe not found' }
 
 Ok (Test-Path -LiteralPath $SetupExe) 'setup.exe exists'
 $shaFile = "$SetupExe.sha256"

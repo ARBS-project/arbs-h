@@ -1,6 +1,7 @@
 #include "tools/playnite_launcher/playnite_process.h"
 
 #include "src/logging.h"
+#include "src/platform/windows/arbs_h_names.h"
 #include "src/platform/windows/ipc/misc_utils.h"
 
 #include <algorithm>
@@ -23,8 +24,9 @@ namespace playnite_launcher::playnite {
   namespace {
     constexpr wchar_t cleanup_watchdog_filename[] = L"playnite-cleanup-watchdog.exe";
     constexpr wchar_t cleanup_watchdog_cache_directory[] = L"playnite-watchdogs";
-    constexpr wchar_t cleanup_watchdog_cache_mutex[] = L"Local\\VibepolloPlayniteWatchdogCache-v1";
-    constexpr wchar_t cleanup_lease_mutex_prefix[] = L"Local\\VibepolloPlayniteCleanupLease-v1-";
+    // H013 N3/N4: ARBS-H's own lock names (were shared with Vibepollo).
+    constexpr wchar_t cleanup_watchdog_cache_mutex[] = ARBS_H_PLAYNITE_WATCHDOG_CACHE_MUTEX_W;
+    constexpr wchar_t cleanup_lease_mutex_prefix[] = ARBS_H_PLAYNITE_CLEANUP_LEASE_PREFIX_W;
 
     std::optional<std::wstring> cleanup_lease_mutex_name(const std::string &install_dir_utf8) {
       if (install_dir_utf8.empty()) {
@@ -180,7 +182,9 @@ namespace playnite_launcher::playnite {
         return std::nullopt;
       }
 
-      std::filesystem::path root = std::filesystem::path(local_app_data) / L"Vibepollo" / cleanup_watchdog_cache_directory;
+      // H013 N5: %LOCALAPPDATA%\ARBS-H. The stale-version cleanup below deletes every other hash folder,
+      // so a shared folder would delete Vibepollo's watchdog cache.
+      std::filesystem::path root = std::filesystem::path(local_app_data) / ARBS_H_USER_DIR_W / cleanup_watchdog_cache_directory;
       CoTaskMemFree(local_app_data);
       return root;
     }

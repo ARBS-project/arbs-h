@@ -517,12 +517,18 @@ namespace platf {
              std::filesystem::is_regular_file(manifest.parent_path() / layer.library_name, ec);
     }
 
-    // Match only our two manifest leaves, including registrations at old install
-    // paths. Other implicit layers share this key and must remain untouched.
+    // H013 N15: match only the full manifest paths of this installation. Vibepollo and
+    // Apollo register manifests with the same leaf names from their own folders, and
+    // other implicit layers share this key; all of them must remain untouched.
     bool value_name_is_our_manifest(const std::wstring &value_name) {
-      const auto leaf = std::filesystem::path {value_name}.filename().wstring();
-      return _wcsicmp(leaf.c_str(), kVulkanHdrLayerManifestName) == 0 ||
-             _wcsicmp(leaf.c_str(), kVulkanHdrLayerX86ManifestName) == 0;
+      const auto candidate = std::filesystem::path {value_name}.lexically_normal().wstring();
+      for (const auto &layer : kVulkanHdrLayers) {
+        const auto own = vulkan_hdr_layer_manifest_path(layer);
+        if (!own.empty() && _wcsicmp(candidate.c_str(), own.lexically_normal().wstring().c_str()) == 0) {
+          return true;
+        }
+      }
+      return false;
     }
 
     bool unregister_vulkan_hdr_layer_view(REGSAM view) {

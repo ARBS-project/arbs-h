@@ -1,6 +1,7 @@
 #include "tools/playnite_launcher/launcher.h"
 
 #include "src/logging.h"
+#include "src/platform/windows/arbs_h_names.h"
 #include "src/platform/windows/ipc/misc_utils.h"
 #include "src/platform/windows/playnite_ipc.h"
 #include "src/platform/windows/playnite_protocol.h"
@@ -84,7 +85,7 @@ namespace playnite_launcher {
         appdataW = L".";
       }
       appdataW.resize(wcslen(appdataW.c_str()));
-      std::filesystem::path logdir = std::filesystem::path(appdataW) / L"Sunshine";
+      std::filesystem::path logdir = std::filesystem::path(appdataW) / ARBS_H_USER_DIR_W;  // H013 N14
       std::error_code ec;
       std::filesystem::create_directories(logdir, ec);
       return logdir / L"sunshine_playnite_launcher.log";

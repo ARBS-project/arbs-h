@@ -41,6 +41,7 @@
   #include "httpcommon.h"
   #include "logging.h"
   #include "log_export.h"
+  #include "src/platform/windows/arbs_h_names.h"
   #include "src/platform/windows/ipc/misc_utils.h"
   #include "src/platform/windows/playnite_integration.h"
   #include "src/platform/windows/playnite_plugin_migration.h"
@@ -666,22 +667,24 @@ namespace confighttp {
       return it->path;
     }
 
-    void add_helper_log_roots(const std::filesystem::path &root, const std::string &base_name, std::vector<log_candidate_t> &candidates, bool include_temp = true) {
+    // H013 N12-N14: ARBS-H helper logs live in %APPDATA%\ARBS-H (log_folder = ARBS_H_USER_DIR_W).
+    // Only the Playnite connector log stays in the shared folder (ARBS_H_PLAYNITE_CONNECTOR_LOG_DIR_W, H013 D1).
+    void add_helper_log_roots(const std::filesystem::path &root, const std::string &base_name, const wchar_t *log_folder, std::vector<log_candidate_t> &candidates, bool include_temp = true) {
       if (root.empty()) {
         return;
       }
-      const auto sunshine_base = root / L"Sunshine";
-      add_session_log_candidates(sunshine_base / L"logs", base_name + "-", candidates);
-      add_log_candidate(sunshine_base / (base_name + ".log"), candidates);
+      const auto log_base = root / log_folder;
+      add_session_log_candidates(log_base / L"logs", base_name + "-", candidates);
+      add_log_candidate(log_base / (base_name + ".log"), candidates);
 
       if (include_temp) {
         const auto temp_base = root / L"Temp";
-        add_session_log_candidates(temp_base / L"Sunshine" / L"logs", base_name + "-", candidates);
+        add_session_log_candidates(temp_base / log_folder / L"logs", base_name + "-", candidates);
         add_log_candidate(temp_base / (base_name + ".log"), candidates);
       }
     }
 
-    std::optional<std::filesystem::path> find_latest_helper_log(const std::string &base_name) {
+    std::optional<std::filesystem::path> find_latest_helper_log(const std::string &base_name, const wchar_t *log_folder) {
       std::vector<log_candidate_t> candidates;
       try {
         platf::dxgi::safe_token user_token;
@@ -692,7 +695,7 @@ namespace confighttp {
           if (SUCCEEDED(SHGetKnownFolderPath(id, 0, user_token.get(), &baseW)) && baseW) {
             std::filesystem::path base = baseW;
             CoTaskMemFree(baseW);
-            add_helper_log_roots(base, base_name, candidates);
+            add_helper_log_roots(base, base_name, log_folder, candidates);
           }
         };
 
@@ -706,7 +709,7 @@ namespace confighttp {
           return;
         }
         std::filesystem::path base = std::filesystem::path(baseW);
-        add_helper_log_roots(base, base_name, candidates);
+        add_helper_log_roots(base, base_name, log_folder, candidates);
       };
 
       add_csidl_root(CSIDL_APPDATA);
@@ -717,7 +720,7 @@ namespace confighttp {
         DWORD n = GetTempPathW(_countof(tmpPathW), tmpPathW);
         if (n > 0 && n < _countof(tmpPathW)) {
           std::filesystem::path temp_base = std::filesystem::path(tmpPathW);
-          add_helper_log_roots(temp_base, base_name, candidates, false);
+          add_helper_log_roots(temp_base, base_name, log_folder, candidates, false);
         }
       } catch (...) {}
 
@@ -731,10 +734,12 @@ namespace confighttp {
 
   bool read_helper_log(const std::string &source, std::string &out) {
     std::string base_name;
+    const wchar_t *log_folder = ARBS_H_USER_DIR_W;
     if (source == "display_helper") {
       base_name = "sunshine_display_helper";
     } else if (source == "playnite") {
       base_name = "sunshine_playnite";
+      log_folder = ARBS_H_PLAYNITE_CONNECTOR_LOG_DIR_W;  // connector log (H013 D1)
     } else if (source == "playnite_launcher") {
       base_name = "sunshine_playnite_launcher";
     } else if (source == "wgc") {
@@ -743,7 +748,7 @@ namespace confighttp {
       return false;
     }
 
-    auto latest = find_latest_helper_log(base_name);
+    auto latest = find_latest_helper_log(base_name, log_folder);
     if (!latest) {
       return false;
     }
@@ -830,13 +835,14 @@ namespace confighttp {
       }
     } catch (...) {}
 
-    // Playnite plugin log (Roaming\Sunshine\sunshine_playnite.log)
+    // Playnite plugin log (Roaming\Sunshine\sunshine_playnite.log). The connector is still shared
+    // with Vibepollo (H013 D1), so its log folder stays ARBS_H_PLAYNITE_CONNECTOR_LOG_DIR_W.
     try {
       platf::dxgi::safe_token user_token;
       user_token.reset(platf::dxgi::retrieve_users_token(false));
       PWSTR roamingW = nullptr;
       if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, user_token.get(), &roamingW)) && roamingW) {
-        std::filesystem::path p = std::filesystem::path(roamingW) / L"Sunshine" / L"sunshine_playnite.log";
+        std::filesystem::path p = std::filesystem::path(roamingW) / ARBS_H_PLAYNITE_CONNECTOR_LOG_DIR_W / L"sunshine_playnite.log";
         CoTaskMemFree(roamingW);
         collection.add_file(p, p.filename().string());
       }
@@ -940,6 +946,22 @@ namespace confighttp {
       return visited_helper_bases.insert(key).second;
     };
 
+    // H013 N12-N14: ARBS-H helper logs come from the ARBS-H folder. The shared connector folder
+    // contributes only the Playnite connector logs, never another product's helper logs.
+    auto add_connector_logs = [&](const std::filesystem::path &base) {
+      if (!mark_base_visited(base)) {
+        return;
+      }
+      {
+        std::filesystem::path p = base / L"sunshine_playnite.log";
+        collection.add_file(p, p.filename().string());
+      }
+      static const std::vector<std::string> connector_log_prefixes {
+        "sunshine_playnite-",
+      };
+      add_session_logs_with_prefixes(base / L"logs", connector_log_prefixes);
+    };
+
     auto add_user_helper_logs = [&](const std::filesystem::path &base) {
       if (!mark_base_visited(base)) {
         return;
@@ -966,7 +988,7 @@ namespace confighttp {
         collection.add_file(p, p.filename().string());
       }
 
-      // Session-mode helper logs live under Roaming/LocalAppData\\Sunshine\\logs.
+      // Session-mode helper logs live under Roaming/LocalAppData\\ARBS-H\\logs.
       static const std::vector<std::string> helper_log_prefixes {
         "sunshine_playnite_launcher-",
         "sunshine_playnite-",
@@ -983,9 +1005,10 @@ namespace confighttp {
         user_token.reset(platf::dxgi::retrieve_users_token(false));
         PWSTR baseW = nullptr;
         if (SUCCEEDED(SHGetKnownFolderPath(id, 0, user_token.get(), &baseW)) && baseW) {
-          std::filesystem::path base = std::filesystem::path(baseW) / L"Sunshine";
+          const std::filesystem::path root = std::filesystem::path(baseW);
           CoTaskMemFree(baseW);
-          add_user_helper_logs(base);
+          add_user_helper_logs(root / ARBS_H_USER_DIR_W);
+          add_connector_logs(root / ARBS_H_PLAYNITE_CONNECTOR_LOG_DIR_W);
         }
       };
       add_user_sunshine_logs(FOLDERID_RoamingAppData);
@@ -997,8 +1020,9 @@ namespace confighttp {
       if (!SUCCEEDED(SHGetFolderPathW(nullptr, csidl, nullptr, SHGFP_TYPE_CURRENT, baseW))) {
         return;
       }
-      std::filesystem::path base = std::filesystem::path(baseW) / L"Sunshine";
-      add_user_helper_logs(base);
+      const std::filesystem::path root = std::filesystem::path(baseW);
+      add_user_helper_logs(root / ARBS_H_USER_DIR_W);
+      add_connector_logs(root / ARBS_H_PLAYNITE_CONNECTOR_LOG_DIR_W);
     };
 
     try_add_sunshine_logs(CSIDL_APPDATA);

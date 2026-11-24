@@ -107,6 +107,9 @@ var
   PlanKeys, PlanVals: TArrayOfString;
   PlanOk, IsUpgrade, KeepConfig, RestoreVibe: Boolean;
   ServiceWasRunning, PostInstallRan: Boolean;
+  // H013 O4: ARBS-H service state and start type seen by the FIRST prepare (a retry or Back sees it stopped).
+  ServiceStateBefore, ServiceStartBefore: String;
+  ServiceBeforeKnown: Boolean;
 
 procedure LoadKeyValues(const FileName: String; var Keys, Vals: TArrayOfString);
 var
@@ -258,18 +261,43 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Script, ResFile, Before: String;
   Code: Integer;
+  Retry: Boolean;
   RK, RV: TArrayOfString;
 begin
   Result := '';
   Script := ExpandConstant('{tmp}\') + HelperName;
   ResFile := ExpandConstant('{tmp}\arbs-h-prepare.txt');
-  DeleteFile(ResFile);
-  Code := RunHelper(Script, '-Action prepare ' + CommonArgs + ' -ResultOut "' + ResFile + '"');
-  LoadKeyValues(ResFile, RK, RV);
-  Before := ValueOf(RK, RV, 'service-before');
-  // Stays True once set: this page can run again after Back.
-  if (Before = 'RUNNING') or (Before = 'START_PENDING') then
-    ServiceWasRunning := True;
+  // H013 O5: runs before any file is copied, so a file held by another program is reported here and not by
+  // Inno's own DeleteFile error window. rc 8 = a program outside {app} holds a file below {app}; it is never ended.
+  repeat
+    DeleteFile(ResFile);
+    Code := RunHelper(Script, '-Action prepare ' + CommonArgs + ' -ResultOut "' + ResFile + '"');
+    LoadKeyValues(ResFile, RK, RV);
+    Before := ValueOf(RK, RV, 'service-before');
+    // service-before / service-start-before: keep the first values only.
+    if (not ServiceBeforeKnown) and (Before <> '') then
+    begin
+      ServiceStateBefore := Before;
+      ServiceStartBefore := ValueOf(RK, RV, 'service-start-before');
+      ServiceBeforeKnown := True;
+    end;
+    // Stays True once set: this page can run again after Back.
+    if (Before = 'RUNNING') or (Before = 'START_PENDING') then
+      ServiceWasRunning := True;
+    Retry := False;
+    if Code = 8 then
+      Retry := SuppressibleMsgBox('이 프로그램이 ARBS-H 파일을 사용 중입니다: ' + ValueOf(RK, RV, 'locked-by') + #13#10 +
+        '파일: ' + ValueOf(RK, RV, 'busy') + #13#10#13#10 +
+        '이 프로그램을 닫고 [다시 시도]를 누르세요. [취소]를 누르면 아무 파일도 바꾸지 않고 멈춥니다.',
+        mbError, MB_RETRYCANCEL, IDCANCEL) = IDRETRY;
+  until not Retry;
+  if Code = 8 then
+  begin
+    Result := '다른 프로그램이 ARBS-H 파일을 사용 중이라 설치를 멈췄습니다. 아무 파일도 바꾸지 않았습니다. ' +
+      '사용 중인 프로그램: ' + ValueOf(RK, RV, 'locked-by') + '. 파일: ' + ValueOf(RK, RV, 'busy') + '. 로그: ' + LogDir;
+    StartServiceAgain;
+    exit;
+  end;
   if Code = 7 then
   begin
     Result := 'ARBS-H 프로그램이 아직 실행 중이라 파일을 바꿀 수 없습니다. 아무 파일도 바꾸지 않았습니다. ' +
@@ -296,7 +324,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Args, ResFile, Msg: String;
+  Args, ResFile, Msg, Reason: String;
   Code, I: Integer;
   RK, RV: TArrayOfString;
 begin
@@ -306,6 +334,9 @@ begin
   PostInstallRan := True;
   ResFile := ExpandConstant('{tmp}\arbs-h-result.txt');
   Args := '-Action post-install ' + CommonArgs + ' -ResultOut "' + ResFile + '"';
+  // H013 O4: a failure before the start step puts the service back to these values (helper Restore-ServiceAfterFailure).
+  if ServiceBeforeKnown then
+    Args := Args + ' -PrevStart "' + ServiceStartBefore + '" -PrevState "' + ServiceStateBefore + '"';
   if OptChecked(IdxMigrate) then
     Args := Args + ' -Migrate';
   if OptChecked(IdxUsbip) then
@@ -320,8 +351,19 @@ begin
                'Vibepollo 서비스를 멈춘 뒤 이 설치 파일을 다시 실행하면(같은 자리 업그레이드) 자동 시작으로 바뀝니다.';
     3: Msg := 'Vibepollo 설정 복사가 실패해 새 설정으로 시작합니다(다시 페어링 필요). Vibepollo 원본은 그대로입니다.';
     4: Msg := '드라이버 설치가 실패했습니다. 나머지 설치는 끝났습니다.';
+    -1: begin
+          // The helper did not run at all: the service is still stopped by prepare.
+          Msg := '설치 후 설정 단계가 실패했습니다: 설정 도구(PowerShell)를 실행하지 못했습니다. 서비스는 설치 전 상태로 되돌립니다.';
+          StartServiceAgain;
+        end;
   else
-    Msg := '설치 후 설정 단계가 실패했습니다(코드 ' + IntToStr(Code) + ').';
+    begin
+      // H013 O4: cause in one line; the helper already put the service back (service-restore) when it could.
+      Reason := ValueOf(RK, RV, 'reason');
+      if Reason = '' then
+        Reason := '코드 ' + IntToStr(Code);
+      Msg := '설치 후 설정 단계가 실패했습니다: ' + Reason;
+    end;
   end;
   Msg := Msg + #13#10#13#10 + '로그: ' + LogDir;
   for I := 0 to GetArrayLength(RK) - 1 do
@@ -354,16 +396,45 @@ begin
   Result := True;
 end;
 
+// H013 O3: the result goes to setup-logs (not {tmp}); after the files are removed the user is told what is left.
+function UninstallResultFile: String;
+begin
+  Result := ExpandConstant('{commonappdata}\ARBS-H\setup-logs\uninstall-result.txt');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  Args: String;
+  Args, Msg, Left, Busy, Lockers, LeftConfig: String;
+  RK, RV: TArrayOfString;
 begin
-  if CurUninstallStep <> usUninstall then
+  if CurUninstallStep = usUninstall then
+  begin
+    DeleteFile(UninstallResultFile);
+    Args := '-Action uninstall -AppDir "' + ExpandConstant('{app}') + '" -ResultOut "' + UninstallResultFile + '"';
+    if not KeepConfig then
+      Args := Args + ' -RemoveConfig';
+    if RestoreVibe then
+      Args := Args + ' -RestoreVibepollo';
+    RunHelper(ExpandConstant('{app}\tools\arbs-h\') + HelperName, Args);
     exit;
-  Args := '-Action uninstall -AppDir "' + ExpandConstant('{app}') + '"';
-  if not KeepConfig then
-    Args := Args + ' -RemoveConfig';
-  if RestoreVibe then
-    Args := Args + ' -RestoreVibepollo';
-  RunHelper(ExpandConstant('{app}\tools\arbs-h\') + HelperName, Args);
+  end;
+  if (CurUninstallStep <> usPostUninstall) or UninstallSilent then
+    exit;
+  LoadKeyValues(UninstallResultFile, RK, RV);
+  Left := ValueOf(RK, RV, 'uninstall-left');
+  Busy := ValueOf(RK, RV, 'busy');
+  Lockers := ValueOf(RK, RV, 'locked-by');
+  LeftConfig := ValueOf(RK, RV, 'left-config');
+  if (Left = '') and (Busy = '') and (Lockers = '') and (LeftConfig = '') then
+    exit;
+  Msg := '일부 파일이 남았습니다: ' + Busy;
+  if Left = 'processes' then
+    Msg := Msg + ' (끝나지 않은 ARBS-H 프로그램)';
+  if LeftConfig <> '' then
+    Msg := Msg + #13#10 + '지우지 못한 설정·로그: ' + LeftConfig;
+  if Lockers <> '' then
+    Msg := Msg + #13#10 + '사용 중인 프로그램: ' + Lockers;
+  Msg := Msg + #13#10 + '이 프로그램을 닫은 뒤(또는 PC를 다시 시작한 뒤) ' + ExpandConstant('{app}') + ' 폴더를 지우세요.';
+  Msg := Msg + #13#10 + '로그: ' + LogDir;
+  MsgBox(Msg, mbInformation, MB_OK);
 end;

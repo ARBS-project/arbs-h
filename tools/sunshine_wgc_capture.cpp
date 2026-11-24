@@ -29,6 +29,7 @@
 
 // local includes
 #include "src/logging.h"
+#include "src/platform/windows/arbs_h_names.h"
 #include "src/platform/windows/ipc/misc_utils.h"
 #include "src/platform/windows/ipc/pipes.h"
 #include "src/platform/windows/wgc_capture_policy.h"
@@ -2269,7 +2270,7 @@ std::filesystem::path get_roaming_log_directory() {
 
   std::filesystem::path result(roaming_path);
   CoTaskMemFree(roaming_path);
-  result /= L"Sunshine";
+  result /= ARBS_H_USER_DIR_W;  // H013 N13: was the shared Roaming\Sunshine
 
   std::error_code ec;
   std::filesystem::create_directories(result, ec);
@@ -2283,9 +2284,9 @@ std::filesystem::path get_roaming_log_directory() {
 /**
  * @brief Helper function to get the WGC helper log path.
  *
- * Logs live under Roaming/Sunshine so they sit with the other Sunshine logs.
+ * Logs live under Roaming/ARBS-H so they sit with the other ARBS-H helper logs.
  * When session-mode logging is enabled, the returned file path is used to derive
- * the base name and output directory (typically Roaming/Sunshine/logs).
+ * the base name and output directory (typically Roaming/ARBS-H/logs).
  * Falls back to the system temporary directory (or current directory) if the roaming
  * folder cannot be resolved.
  *

@@ -80,6 +80,7 @@
 #include "webrtc_stream.h"
 
 #ifdef _WIN32
+  #include "platform/windows/arbs_h_names.h"
   #include "platform/windows/service_startup.h"
   #include "platform/windows/virtual_display_cleanup.h"
   #include "platform/windows/display_helper_v2/win_scheduled_task_manager.h"
@@ -5216,7 +5217,7 @@ namespace confighttp {
     std::vector<std::filesystem::path> out;
     auto add_if = [&](const std::filesystem::path &base) {
       if (!base.empty()) {
-        out.emplace_back(base / L"Sunshine" / L"display_golden_restore.json");
+        out.emplace_back(base / ARBS_H_USER_DIR_W / L"display_golden_restore.json");  // H013 N11
       }
     };
 

@@ -42,6 +42,8 @@
 #ifdef _WIN32
   #include <wincrypt.h>
   #include <Windows.h>
+
+  #include "platform/windows/arbs_h_names.h"
 #endif
 
 namespace {
@@ -135,7 +137,7 @@ namespace {
         return;
       }
       try {
-        auto temp = std::filesystem::temp_directory_path() / "sunshine-ca-bundle.pem";
+        auto temp = std::filesystem::temp_directory_path() / ARBS_H_CA_BUNDLE_FILE_A;  // H013 N16
         std::ofstream out(temp, std::ios::binary | std::ios::trunc);
         out.write(windows_ca_bundle.data(), static_cast<std::streamsize>(windows_ca_bundle.size()));
         if (out && out.good()) {

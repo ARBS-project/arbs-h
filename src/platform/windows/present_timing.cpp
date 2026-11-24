@@ -21,6 +21,7 @@
 
 // local includes
 #include "src/logging.h"
+#include "src/platform/windows/arbs_h_names.h"
 
 #ifndef INVALID_PROCESSTRACE_HANDLE
   #define INVALID_PROCESSTRACE_HANDLE ((TRACEHANDLE) INVALID_HANDLE_VALUE)
@@ -47,8 +48,10 @@ namespace platf::dxgi::present_timing {
     constexpr GUID dxgi_provider {0xCA11C036, 0x0102, 0x4A2D, {0xA6, 0xAD, 0xF0, 0x3C, 0xFE, 0xD5, 0xD3, 0xC9}};
     constexpr USHORT present_start_event = 42;
     constexpr USHORT present_multiplane_overlay_start_event = 55;
-    constexpr GUID session_guid {0x6E2E1F0C, 0x6A5B, 0x4F5B, {0x9C, 0x3D, 0x3B, 0x0E, 0x9A, 0x7C, 0x1D, 0x42}};
-    constexpr wchar_t session_name[] = L"VibeshinePresentTiming";
+    // H013 N6: ARBS-H's own ETW session. The ERROR_ALREADY_EXISTS path below stops a session of the
+    // same name, so a shared name would stop Vibepollo's running session.
+    constexpr GUID session_guid ARBS_H_PRESENT_TIMING_GUID_INIT;
+    constexpr wchar_t session_name[] = ARBS_H_PRESENT_TIMING_SESSION_W;
     // Stamping happens as each frame is captured; a present is only useful if
     // its event has already been delivered, so flush the session every 2 ms.
     constexpr ULONG flush_timer_ms = 2;

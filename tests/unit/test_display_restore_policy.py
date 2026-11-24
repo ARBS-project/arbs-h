@@ -61,7 +61,10 @@ random_root = function(paths, "  inline std::optional<std::filesystem::path> cre
 assert random_root.index("create_private_system_directory") < random_root.index("write_snapshot_locator")
 locator = function(paths, "  inline std::optional<std::filesystem::path> private_system_snapshot_dir()")
 assert "static std::optional<std::filesystem::path> cached" in locator
-assert "is_trusted_system_object(legacy, true)" in locator
+# H013 N10: the shared legacy %ProgramData%\Sunshine folder (possibly Vibepollo's) is never adopted.
+assert "is_trusted_system_object(legacy, true)" not in locator
+assert 'write_snapshot_locator(key, L"Sunshine")' not in paths
+assert 'name == L"Sunshine"' not in function(paths, "  inline bool is_snapshot_directory_basename(")
 assert "create_random_private_snapshot_dir" in locator
 assert "ensure_private_system_directory" not in paths
 assert "return {};" in function(paths, "  inline std::filesystem::path compute_snapshot_dir()")

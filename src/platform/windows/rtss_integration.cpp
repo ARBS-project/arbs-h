@@ -41,6 +41,7 @@
   // local includes
   #include "src/config.h"
   #include "src/logging.h"
+  #include "src/platform/windows/arbs_h_names.h"
   #include "src/platform/windows/misc.h"
   #include "src/platform/windows/rtss_integration.h"
 
@@ -836,7 +837,7 @@ namespace platf {
         return std::nullopt;
       }
 
-      cached = base / L"Sunshine";
+      cached = base / ARBS_H_PROGRAMDATA_DIR_W;  // H013 N9: was the shared %ProgramData%\Sunshine
       return cached;
     }
 

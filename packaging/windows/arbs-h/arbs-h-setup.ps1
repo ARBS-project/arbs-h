@@ -23,7 +23,11 @@ param(
   [string]$AppDir = (Join-Path $env:ProgramFiles 'ARBS-H'),
   [string]$DataRoot = (Join-Path $env:ProgramData 'ARBS-H'),
   [string]$VibepolloConfig = '',
-  [string]$Version = '0.1.2',
+  [string]$Version = '0.1.3',
+  # H013 O4: ARBS-H service start type and state seen by the first prepare (auto|delayed-auto|demand|disabled|none and
+  # an sc.exe state). Plain strings on purpose: an unexpected value must not stop post-install at parameter binding.
+  [string]$PrevStart = '',
+  [string]$PrevState = '',
   [string]$PlanOut = '',
   [string]$ResultOut = '',
   [string]$OutDir = '',
@@ -62,8 +66,12 @@ $script:Runner = $null
 $script:AclReader = $null   # tests inject { param($Path) <SDDL> } (the fake runner does not model icacls)
 $script:ProcessLister = $null   # tests inject a list of { Id; ParentId; Name; Path }
 $script:FileBusyProbe = $null   # tests inject { param($Path) <$true when locked> }
+$script:LockerProbe = $null   # H013 O5: tests inject { param([string[]]$Paths) list of { Id; Name } }
 $script:HelperImage = 'sunshine_display_helper.exe'
 $script:RestoreWaitSeconds = 20
+$script:RunningWaitSeconds = 15   # H013 O4: sc start only confirms the request; RUNNING is checked this long
+$script:StartAttempted = $false   # H013 O4: set right before sc start; a later failure is not undone by a restore
+$script:SkipUninstallerFiles = $false   # H013 O3: the running uninstaller owns {app}\unins*.exe
 $script:RealExecCount = 0
 $script:LogFile = $null
 $script:Result = [ordered]@{}
@@ -78,6 +86,15 @@ function Write-Log([string]$Message) {
 }
 
 function Set-Result([string]$Key, [string]$Value) { $script:Result[$Key] = $Value; Write-Log "RESULT $Key=$Value" }
+
+# H013 O4: the first cause only, one line (the installer shows it in the error window), at most 120 characters.
+function Set-Reason([string]$Text) {
+  if ($script:Result.Contains('reason')) { return }
+  $t = (($Text -replace '[\r\n\t]+', ' ') -replace ' {2,}', ' ').Trim()
+  if ($t.Length -gt 120) { $t = $t.Substring(0, 117) + '...' }
+  if (-not $t) { $t = 'unknown' }
+  Set-Result 'reason' $t
+}
 
 function Test-UnderRoot([string]$Path, [string]$Root) {
   if (-not $Path -or -not $Root) { return $false }
@@ -254,6 +271,18 @@ function Wait-ServiceState([string]$Name, [string]$Wanted, [int]$Seconds) {
     if (-not $info.Installed -or $info.State -eq $Wanted) { return $true }
     Wait-Short 1000
   }
+  return $false
+}
+
+# H013 O4: true only when the service really reaches RUNNING. STOPPED (or gone) after a start request means it ended.
+function Wait-ServiceRunning([string]$Name, [int]$Seconds) {
+  for ($i = 0; $i -le $Seconds; $i++) {
+    $info = Get-ServiceInfo $Name
+    if ($info.Installed -and $info.State -eq 'RUNNING') { return $true }
+    if (-not $info.Installed -or $info.State -eq 'STOPPED') { Write-Log "$Name not running after start ($($info.State))"; return $false }
+    Wait-Short 1000
+  }
+  Write-Log "$Name still not RUNNING after $Seconds s"
   return $false
 }
 
@@ -532,18 +561,35 @@ function Invoke-Firewall {
 
 # Start now and on every boot only when Vibepollo cannot take the same ports: either the user approved the stop
 # (ApolloService now demand + stopped) or ApolloService is absent/manual/disabled and the ports are free.
-function Invoke-Start {
+# '' when ARBS-H may start, otherwise the conflict text (Vibepollo automatic/running or a stream port in use).
+function Get-StartConflict {
   $apollo = Get-ServiceInfo $script:VibepolloService
   $apolloAuto = $apollo.Installed -and ($apollo.StartType -eq 2 -or $apollo.State -ne 'STOPPED')
   $busy = Get-BusyPorts
   if ($apolloAuto -or $busy.Count -gt 0) {
+    return ('ports=' + ($busy -join ',') + ' apollo=' + $(if ($apollo.Installed) { ConvertTo-StartName $apollo.StartType $apollo.Delayed } else { 'none' }) + '/' + $apollo.State)
+  }
+  return ''
+}
+
+# sc start, then RUNNING confirmed (H013 O4: a service that ends right away is a failed start, not "auto-started").
+function Start-OwnService {
+  $script:StartAttempted = $true
+  $r = Invoke-Ext 'sc.exe' ('start {0}' -f $script:ServiceName)
+  if ($r.ExitCode -ne 0 -and $r.ExitCode -ne 1056) { Set-Reason ('service start failed (sc start exit {0})' -f $r.ExitCode); return $false }
+  if (-not (Wait-ServiceRunning $script:ServiceName $script:RunningWaitSeconds)) { Set-Reason 'service did not reach RUNNING after start'; return $false }
+  return $true
+}
+
+function Invoke-Start {
+  $conflict = Get-StartConflict
+  if ($conflict) {
     [void](Invoke-Ext 'sc.exe' ('config {0} start= demand' -f $script:ServiceName))
-    Set-Result 'start' ('deferred-conflict ports=' + ($busy -join ',') + ' apollo=' + $(if ($apollo.Installed) { ConvertTo-StartName $apollo.StartType $apollo.Delayed } else { 'none' }) + '/' + $apollo.State)
+    Set-Result 'start' ('deferred-conflict ' + $conflict)
     return 10
   }
   [void](Invoke-Ext 'sc.exe' ('config {0} start= auto' -f $script:ServiceName))
-  $r = Invoke-Ext 'sc.exe' ('start {0}' -f $script:ServiceName)
-  if ($r.ExitCode -ne 0 -and $r.ExitCode -ne 1056) { Set-Result 'start' 'auto-start-failed'; return 1 }
+  if (-not (Start-OwnService)) { Set-Result 'start' 'failed'; return 1 }
   Set-Result 'start' 'auto-started'
   return 0
 }
@@ -611,20 +657,133 @@ function Test-FileBusy([string]$Path) {
   catch { return $true }
 }
 
-# exe/dll directly in {app} and {app}\tools, without the files of this helper's own parent chain.
+# H013 O5: every exe/dll anywhere below {app} (drivers\sudovda\*.dll and other sub folders included), except the two
+# configuration folders setup never replaces. Folders that are reparse points (junctions, symbolic links) are not
+# entered: they can lead outside {app}. Own stack instead of Get-ChildItem -Recurse (5.1 follows such links).
+$script:BusyScanSkipDirs = @('config', 'config.migrating')
+function Get-AppBinaryFiles {
+  $root = [IO.Path]::GetFullPath($AppDir).TrimEnd('\')
+  if (-not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
+  $files = New-Object System.Collections.Generic.List[string]
+  $stack = New-Object System.Collections.Generic.Stack[string]
+  $stack.Push($root)
+  while ($stack.Count -gt 0) {
+    $dir = $stack.Pop()
+    try { $entries = @((New-Object IO.DirectoryInfo($dir)).GetFileSystemInfos()) }
+    catch { Write-Log "busy scan: cannot list $dir ($($_.Exception.Message))"; continue }
+    foreach ($e in $entries) {
+      if ($e -is [IO.DirectoryInfo]) {
+        if (($e.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Write-Log "busy scan: reparse point not entered: $($e.FullName)"; continue }
+        if (($dir -ieq $root) -and ($script:BusyScanSkipDirs -icontains $e.Name)) { continue }
+        $stack.Push($e.FullName)
+      }
+      elseif (@('.exe', '.dll') -contains $e.Extension.ToLowerInvariant()) {
+        if ($script:SkipUninstallerFiles -and ($dir -ieq $root) -and ($e.Name -like 'unins*.exe')) { continue }
+        $files.Add($e.FullName)
+      }
+    }
+  }
+  return @($files | Sort-Object)
+}
+
+# Path relative to {app} (tools\x.dll); a path outside {app} stays full.
+function Get-AppRelativePath([string]$Path) {
+  $root = [IO.Path]::GetFullPath($AppDir).TrimEnd('\') + '\'
+  try { $full = [IO.Path]::GetFullPath($Path) } catch { return $Path }
+  if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { return $full.Substring($root.Length) }
+  return $full
+}
+
+# Locked exe/dll below {app} as relative paths, without the files of this helper's own parent chain.
 function Get-BusyAppFiles {
   $all = @(Get-ProcessSnapshot)
   $self = Get-SelfChainIds $all
   $own = @($all | Where-Object { $self.ContainsKey([int]$_.Id) -and $_.Path } | ForEach-Object { $_.Path })
   $busy = @()
-  foreach ($dir in @($AppDir, (Join-Path $AppDir 'tools'))) {
-    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
-    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Force -ErrorAction SilentlyContinue | Where-Object { @('.exe', '.dll') -contains $_.Extension.ToLowerInvariant() })) {
-      if ($own -icontains $f.FullName) { continue }
-      if (Test-FileBusy $f.FullName) { $busy += $f.Name }
-    }
+  foreach ($f in @(Get-AppBinaryFiles)) {
+    if ($own -icontains $f) { continue }
+    if (Test-FileBusy $f) { $busy += (Get-AppRelativePath $f) }
   }
   return $busy
+}
+
+# H013 O5: Restart Manager, query only. RmStartSession/RmRegisterResources/RmGetList/RmEndSession; the session is
+# always ended. Shutting down or restarting the found programs is never done here (installer CloseApplications=no).
+$script:RmTypeSource = @'
+using System; using System.Runtime.InteropServices; using System.Text;
+namespace ArbsH {
+  public static class RestartManagerQuery {
+    [StructLayout(LayoutKind.Sequential)] public struct UP { public int Pid; public System.Runtime.InteropServices.ComTypes.FILETIME Start; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct PI {
+      public UP Process;
+      [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string App;
+      [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string Svc;
+      public int Type; public int Status; public int Session; [MarshalAs(UnmanagedType.Bool)] public bool Restartable; }
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmStartSession(out uint h, int f, StringBuilder k);
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmRegisterResources(uint h, uint n, string[] files, uint a, IntPtr b, uint c, string[] d);
+    [DllImport("rstrtmgr.dll")] static extern int RmGetList(uint h, out uint need, ref uint cnt, [In, Out] PI[] info, out uint reasons);
+    [DllImport("rstrtmgr.dll")] static extern int RmEndSession(uint h);
+    public static PI[] List(string[] files) {
+      uint h; var key = new StringBuilder(33);
+      int r = RmStartSession(out h, 0, key);
+      if (r != 0) throw new Exception("RmStartSession " + r);
+      try {
+        r = RmRegisterResources(h, (uint)files.Length, files, 0, IntPtr.Zero, 0, null);
+        if (r != 0) throw new Exception("RmRegisterResources " + r);
+        for (int attempt = 0; attempt < 4; attempt++) {
+          uint need = 0, cnt = 0, why;
+          r = RmGetList(h, out need, ref cnt, null, out why);
+          if (r == 0) return new PI[0];
+          if (r != 234) throw new Exception("RmGetList " + r);
+          var a = new PI[need]; cnt = need;
+          r = RmGetList(h, out need, ref cnt, a, out why);
+          if (r == 0) { Array.Resize(ref a, (int)cnt); return a; }
+          if (r != 234) throw new Exception("RmGetList " + r);
+        }
+        throw new Exception("RmGetList: list keeps growing");
+      }
+      finally { RmEndSession(h); }
+    }
+  }
+}
+'@
+
+function Get-RealFileLockers([string[]]$Paths) {
+  if (-not ('ArbsH.RestartManagerQuery' -as [type])) { Add-Type -TypeDefinition $script:RmTypeSource -ErrorAction Stop }
+  return @([ArbsH.RestartManagerQuery]::List([string[]]$Paths) | ForEach-Object { [pscustomobject]@{ Id = [int]$_.Process.Pid; Name = [string]$_.App } })
+}
+
+# Programs holding the given full paths: { Id; Name; Path; Inside }. Inside = its executable is below {app} (those are
+# ended by Stop-AppProcesses); a program whose path cannot be read counts as outside and is never ended.
+# DryRun and plan never query this PC unless a test injects $script:LockerProbe (no Add-Type then either).
+function Get-FileLockers([string[]]$Paths) {
+  if ($script:LockerProbe) { $raw = @(& $script:LockerProbe $Paths) }
+  elseif ($DryRun -or $PlanOnly) { Write-Log 'dry-run: lock owner query skipped'; return @() }
+  else { $raw = @(Get-RealFileLockers $Paths) }
+  $all = @(Get-ProcessSnapshot)
+  $self = Get-SelfChainIds $all
+  $byId = @{}
+  foreach ($p in $all) { $byId[[int]$p.Id] = $p }
+  $out = @()
+  foreach ($l in $raw) {
+    $id = [int]$l.Id
+    if ($self.ContainsKey($id)) { continue }
+    $path = ''; $name = [string]$l.Name
+    if ($byId.ContainsKey($id)) { $path = [string]$byId[$id].Path; if (-not $name) { $name = [string]$byId[$id].Name } }
+    if (-not $name) { $name = 'unknown' }
+    $out += [pscustomobject]@{ Id = $id; Name = $name; Path = $path; Inside = (Test-InAppDir $path) }
+  }
+  return $out
+}
+
+# 'name (PID n), ...' of the programs outside {app} that hold busy files; 'unknown' when the query itself failed.
+function Get-OutsideLockerText([string[]]$Busy) {
+  $full = @($Busy | ForEach-Object { Join-Path $AppDir $_ })
+  try { $lockers = @(Get-FileLockers $full) }
+  catch { Write-Log "lock owner query failed: $($_.Exception.Message)"; return 'unknown' }
+  $outside = @($lockers | Where-Object { -not $_.Inside })
+  if ($outside.Count -eq 0) { return '' }
+  return ((@($outside | ForEach-Object { '{0} (PID {1})' -f ($_.Name -replace '[,=\r\n]', ' '), $_.Id }) | Select-Object -Unique) -join ', ')
 }
 
 # Only a folder that really is an ARBS-H install: never a drive root, and only with our version file or our service.
@@ -652,7 +811,8 @@ function Wait-DisplayRestore {
   }
 }
 
-# 0 = nothing left that blocks the file copy, 2 = service will not stop, 7 = still running or locked (nothing changed).
+# 0 = nothing left that blocks the file copy, 2 = service will not stop, 7 = still running or locked (nothing changed),
+# 8 = a program outside {app} holds a file below {app} (H013 O5: never ended; locked-by= names it for the user).
 function Stop-AppProcesses($Own) {
   if (-not (Test-AppFolderIsOurs $Own)) { Set-Result 'app-processes' 'skipped-not-arbs-folder'; return 0 }
   $procs = @(Get-AppProcesses)
@@ -688,8 +848,16 @@ function Stop-AppProcesses($Own) {
     $busy = @(Get-BusyAppFiles)
   }
   if ($left.Count -gt 0 -or $busy.Count -gt 0) {
-    $names = @(@($left | ForEach-Object { $_.Name }) + @($busy) | Select-Object -Unique)
+    $names = @(@($left | ForEach-Object { Get-AppRelativePath $_.Path }) + @($busy) | Select-Object -Unique)
     Set-Result 'busy' ($names -join ',')
+    if ($busy.Count -gt 0) {
+      $lockedBy = Get-OutsideLockerText $busy
+      if ($lockedBy) {
+        Set-Result 'locked-by' $lockedBy
+        Set-Result 'prepare' 'locked-by-other'
+        return 8
+      }
+    }
     Set-Result 'prepare' 'app-busy'
     return 7
   }
@@ -700,6 +868,8 @@ function Stop-AppProcesses($Own) {
 function Invoke-Prepare {
   $own = Get-ServiceInfo $script:ServiceName
   Set-Result 'service-before' $own.State
+  # H013 O4: post-install puts the service back to this start type (and state) when it fails before the start step.
+  Set-Result 'service-start-before' $(if ($own.Installed) { ConvertTo-StartName $own.StartType $own.Delayed } else { 'none' })
   if ($own.Installed -and $own.State -ne 'STOPPED') {
     [void](Invoke-Ext 'sc.exe' ('stop {0}' -f $script:ServiceName))
     if (-not (Wait-ServiceState $script:ServiceName 'STOPPED' 60)) { Set-Result 'prepare' 'stop-timeout'; return 2 }
@@ -723,17 +893,17 @@ function Invoke-Prepare {
   return 0
 }
 
-function Invoke-PostInstall {
+function Invoke-PostInstallSteps {
   $rc = 0
   if ($Migrate) {
     if ((Invoke-Migrate) -ne 0) { $rc = 3 }
   }
   else { Set-Result 'migrate' 'not-selected' }
-  if ((Invoke-EnsureConfig) -ne 0) { return 1 }
+  if ((Invoke-EnsureConfig) -ne 0) { Set-Reason ('default configuration: ' + $script:Result['config']); return 1 }
   $acl = Invoke-RepairCredentialsAcl
   if ((Invoke-Drivers) -ne 0 -and $rc -eq 0) { $rc = 4 }
-  if ((Invoke-Service) -ne 0) { return 1 }
-  if ((Invoke-Firewall) -ne 0) { return 1 }
+  if ((Invoke-Service) -ne 0) { Set-Reason ('service registration: ' + $script:Result['service']); return 1 }
+  if ((Invoke-Firewall) -ne 0) { Set-Reason 'firewall rule failed'; return 1 }
   [IO.File]::WriteAllText((Join-Path $AppDir 'arbs-h-version.txt'), $Version, (New-Object Text.UTF8Encoding($false)))
   if ($acl -ne 0) {
     # sunshine.exe cannot read its TLS certificate with this ACL and would only restart in a loop: leave it manual.
@@ -744,6 +914,43 @@ function Invoke-PostInstall {
   $s = Invoke-Start
   if ($s -eq 1) { return 1 }
   if ($s -eq 10 -and $rc -eq 0) { $rc = 10 }
+  return $rc
+}
+
+# H013 O4: post-install failed (rc 1) before the start step. Back to the start type prepare saw and, if the service was
+# running, started again, unless Vibepollo or a port conflict would make it fail (same rule as Invoke-Start). rc 6
+# (credentials ACL) and rc 10 (port conflict) never come here: they leave the service manual on purpose.
+function Restore-ServiceAfterFailure {
+  if (-not $PrevStart -or $PrevStart -eq 'none') { Set-Result 'service-restore' 'not-needed'; Set-Result 'start' 'not-started'; return }
+  $own = Get-ServiceInfo $script:ServiceName
+  if (-not $own.Installed) { Set-Result 'service-restore' 'not-needed'; Set-Result 'start' 'not-started'; return }
+  if (@('auto', 'delayed-auto', 'demand', 'disabled') -notcontains $PrevStart) { Write-Log "service-restore: unexpected previous start type '$PrevStart', start type kept" }
+  elseif ((ConvertTo-StartName $own.StartType $own.Delayed) -ne $PrevStart) {
+    $r = Invoke-Ext 'sc.exe' ('config {0} start= {1}' -f $script:ServiceName, $PrevStart)
+    if ($r.ExitCode -ne 0) { Write-Log "service-restore: start type not restored (exit $($r.ExitCode))" }
+  }
+  if (@('RUNNING', 'START_PENDING') -notcontains $PrevState) { Set-Result 'service-restore' 'stopped-as-before'; Set-Result 'start' 'not-started'; return }
+  $conflict = Get-StartConflict
+  if ($conflict) { Set-Result 'service-restore' 'deferred-conflict'; Set-Result 'start' ('deferred-conflict ' + $conflict); return }
+  if (Start-OwnService) { Set-Result 'service-restore' 'restored-running'; Set-Result 'start' 'restored-running'; return }
+  Set-Result 'service-restore' 'failed'
+  Set-Result 'start' 'failed'
+}
+
+function Invoke-PostInstall {
+  $script:StartAttempted = $false
+  $rc = 1
+  try { $rc = Invoke-PostInstallSteps }
+  catch {
+    Write-Log ("ERROR " + $_.Exception.Message)
+    Set-Result 'error' $_.Exception.Message
+    Set-Reason ('post-install: ' + $_.Exception.Message)
+    $rc = 1
+  }
+  if ($rc -eq 1 -and -not $script:StartAttempted) {
+    try { Restore-ServiceAfterFailure }
+    catch { Set-Result 'service-restore' 'failed'; Write-Log "service restore failed: $($_.Exception.Message)" }
+  }
   return $rc
 }
 
@@ -775,22 +982,44 @@ function Invoke-Rollback {
   return (Restore-ApolloService)
 }
 
+# H013 O3: the ARBS-H processes below {app} (helper, sunshine.exe with its tray) are ended with the same function as
+# the install (by full path; Vibepollo/Apollo folders untouched) BEFORE the restore task is deleted, so a helper that
+# is still restoring the display gets its wait. Nothing stops the uninstall; what is left is reported (uninstall-left,
+# busy, locked-by, left-config) and the Vibepollo restore always runs.
 function Invoke-Uninstall {
+  $own = @{ Installed = $false; StartType = 0; Delayed = $false; State = 'NONE'; BinaryPath = '' }
+  try { $own = Get-ServiceInfo $script:ServiceName } catch { Write-Log "uninstall: service query failed: $($_.Exception.Message)" }
   [void](Invoke-Ext 'sc.exe' ('stop {0}' -f $script:ServiceName))
   [void](Wait-ServiceState $script:ServiceName 'STOPPED' 60)
+  $script:SkipUninstallerFiles = $true
+  $stop = 0
+  try { $stop = Stop-AppProcesses $own }
+  catch { Write-Log "uninstall: process stop failed: $($_.Exception.Message)"; $stop = 1 }
   [void](Invoke-Ext 'sc.exe' ('delete {0}' -f $script:ServiceName))
   foreach ($rule in $script:FirewallRules) { [void](Invoke-Ext 'netsh.exe' ('advfirewall firewall delete rule name={0}' -f (Quote $rule.Name))) }
   [void](Invoke-Ext 'schtasks.exe' ('/Delete /TN {0} /F' -f (Quote $script:RestoreTask)))
   if ($RemoveConfig) {
+    $notRemoved = @()
     foreach ($p in @((Join-Path $AppDir 'config'), (Join-Path $DataRoot 'Logs'), (Join-Path $DataRoot 'backup'))) {
-      if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force; Write-Log "removed $p" }
+      if (-not (Test-Path -LiteralPath $p)) { continue }
+      try { Remove-Item -LiteralPath $p -Recurse -Force; Write-Log "removed $p" }
+      catch { Write-Log "not removed: $p ($($_.Exception.Message))"; $notRemoved += $p }
     }
-    Set-Result 'config' 'removed'
+    if ($notRemoved.Count -gt 0) { Set-Result 'config' 'partly-removed'; Set-Result 'left-config' ($notRemoved -join ',') }
+    else { Set-Result 'config' 'removed' }
   }
   else { Set-Result 'config' 'kept' }
   $rc = 0
-  if ($RestoreVibepollo) { $rc = Restore-ApolloService } else { Set-Result 'vibepollo' 'not-restored' }
+  if ($RestoreVibepollo) {
+    try { $rc = Restore-ApolloService }
+    catch { Write-Log "uninstall: Vibepollo restore failed: $($_.Exception.Message)"; Set-Result 'vibepollo' 'restore-failed'; $rc = 5 }
+  }
+  else { Set-Result 'vibepollo' 'not-restored' }
   Set-Result 'drivers' 'kept'
+  if ($stop -ne 0) {
+    Set-Result 'uninstall-left' $(if ($script:Result.Contains('busy')) { $script:Result['busy'] } else { 'processes' })
+    if ($rc -eq 0) { $rc = $stop }
+  }
   return $rc
 }
 

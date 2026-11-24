@@ -401,9 +401,9 @@ namespace display_helper_paths {
   }
 
   inline bool is_snapshot_directory_basename(const std::wstring_view name) {
-    if (name == L"Sunshine") {
-      return true;
-    }
+    // H013 N10: the shared legacy %ProgramData%\Sunshine folder is no longer a valid locator
+    // value. It may belong to Vibepollo, and remove_untrusted_snapshot_objects() would delete
+    // files inside it. A 0.1.2 locator naming that folder is rejected and replaced by a new random folder.
     constexpr std::wstring_view prefix = L"Sunshine-State-";
     constexpr size_t guid_length = 38;
     if (!name.starts_with(prefix) || name.size() != prefix.size() + guid_length) {
@@ -535,16 +535,8 @@ namespace display_helper_paths {
           // Recheck after winning the atomic registry-subkey election: a prior
           // initializer may have published just before releasing its lock.
           cached = validated_snapshot_locator_path(program_data_path, key);
-          if (!cached) {
-            // Preserve prior state only when the legacy directory is already
-            // an exact private SYSTEM/Admin object. A hostile canonical path
-            // is ignored rather than renamed, repaired, or traversed.
-            const auto legacy = program_data_path / L"Sunshine";
-            if (is_trusted_system_object(legacy, true) && remove_untrusted_snapshot_objects(legacy) &&
-                write_snapshot_locator(key, L"Sunshine")) {
-              cached = validated_snapshot_locator_path(program_data_path, key);
-            }
-          }
+          // H013 N10: never adopt the legacy %ProgramData%\Sunshine folder (shared with
+          // Vibepollo). Old snapshots there are left untouched (H013 D3).
           if (!cached) {
             cached = create_random_private_snapshot_dir(program_data_path, key);
           }
@@ -637,7 +629,7 @@ namespace display_helper_paths {
     appdataW.resize(MAX_PATH);
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdataW.data()))) {
       appdataW.resize(wcslen(appdataW.c_str()));
-      auto path = std::filesystem::path(appdataW) / L"Sunshine";
+      auto path = std::filesystem::path(appdataW) / ARBS_H_USER_DIR_W;  // H013 N11/N12
       std::error_code ec;
       std::filesystem::create_directories(path, ec);
       return path;
@@ -651,7 +643,7 @@ namespace display_helper_paths {
       DWORD written = GetEnvironmentVariableW(L"APPDATA", envAppData.data(), needed);
       if (written > 0) {
         envAppData.resize(written);
-        auto path = std::filesystem::path(envAppData) / L"Sunshine";
+        auto path = std::filesystem::path(envAppData) / ARBS_H_USER_DIR_W;  // H013 N11/N12
         std::error_code ec;
         std::filesystem::create_directories(path, ec);
         return path;
@@ -664,12 +656,12 @@ namespace display_helper_paths {
     DWORD tlen = GetTempPathW(MAX_PATH, tempW.data());
     if (tlen > 0 && tlen < MAX_PATH) {
       tempW.resize(tlen);
-      auto path = std::filesystem::path(tempW) / L"Sunshine";
+      auto path = std::filesystem::path(tempW) / ARBS_H_USER_DIR_W;  // H013 N11/N12
       std::error_code ec;
       std::filesystem::create_directories(path, ec);
       return path;
     }
-    auto path = std::filesystem::path(L".") / L"Sunshine";
+    auto path = std::filesystem::path(L".") / ARBS_H_USER_DIR_W;  // H013 N11/N12
     std::error_code ec;
     std::filesystem::create_directories(path, ec);
     return path;

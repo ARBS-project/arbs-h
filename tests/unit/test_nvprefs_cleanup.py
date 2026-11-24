@@ -39,6 +39,8 @@ program = r'''
 #include <string>
 #include <utility>
 #include <vector>
+// H013 N7: includes are stripped, so define the arbs_h_names.h folder used by the interface.
+#define ARBS_H_PROGRAMDATA_DIR_W L"ARBS-H"
 namespace fs = std::filesystem;
 bool logging_alive = true, error_log_throws = false;
 std::string fail_at, throw_at;
@@ -153,14 +155,14 @@ bool driver_settings_t::check_and_modify_global_profile(std::optional<undo_data_
 bool driver_settings_t::check_and_modify_application_profile(bool &modified) { modified = false; return true; }
 }
 INTERFACE_SOURCE
-fs::path journal() { return program_data / "Sunshine/nvprefs_undo.json"; }
+fs::path journal() { return program_data / "ARBS-H/nvprefs_undo.json"; }
 std::string bytes() { std::ifstream stream(journal()); return {std::istreambuf_iterator<char>(stream), {}}; }
 void clear_faults() { fail_at.clear(); throw_at.clear(); error_log_throws = false; }
 void reset() {
   assert(locks.empty());
   logging_alive = true;
   clear_faults(); calls.clear(); global_setting = pending_setting = 11;
-  fs::remove_all(program_data / "Sunshine");
+  fs::remove_all(program_data / "ARBS-H");
 }
 void own(nvprefs::nvprefs_interface &prefs) {
   assert(prefs.load());

@@ -34,6 +34,8 @@ function New-FakeState {
     # R1b-fix1: fake process table and restore task.
     Procs = (New-Object System.Collections.ArrayList); Locked = @(); KillWorks = $true; ReviveOnce = $false; StopFailsAfterRevive = $false
     TaskPresent = $false; HelperGoneAfter = 0; ListCalls = 0; LockCalls = 0
+    # H013 O5: programs that hold files (Restart Manager answers). A holder counts while its Id is in Procs.
+    Holders = (New-Object System.Collections.ArrayList); LockerCalls = 0; LockerThrows = $false
   }
 }
 $script:SddlInherited = 'O:BAG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)'   # Program Files default
@@ -442,7 +444,7 @@ Invoke-Case 'post-install-first' {
   Eq $script:Result['start'] 'auto-started' 'first install: started'
   Eq $script:Result['credentials-acl'] 'ok' 'first install: migrated credentials already private'
   Eq $S.Services.ARBSHService.Start 2 'ARBSHService auto'; Eq $S.Services.ARBSHService.State 'RUNNING' 'ARBSHService running'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.2' 'version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.3' 'version file'
   Ok (-not ((Mutations) -match '^sc\.exe (delete|start) ApolloService|delete rule name="Vibepollo|VibepolloDisplayRestore|^pnputil\.exe /(delete|remove)')) 'Vibepollo service/rules/task/drivers never deleted'
 }
 
@@ -628,7 +630,7 @@ Invoke-Case 'h5-still-running' {
   $S.KillWorks = $false
   [void]$S.Procs.Add((New-FakeProc 501 $script:HelperExe "$app\tools\$($script:HelperExe)"))
   Eq (Invoke-Prepare) 7 'H5 process survives: rc 7'
-  Eq $script:Result['busy'] $script:HelperExe 'H5 busy names the file'
+  Eq $script:Result['busy'] "tools\$($script:HelperExe)" 'H5 busy names the file (relative to {app}, H013)'
   Eq $script:Result['prepare'] 'app-busy' 'H5 result'
   Eq @(Kills).Count 3 'H5 three attempts'
   Test-NoBackup
@@ -640,7 +642,7 @@ Invoke-Case 'h5-file-locked' {
   [IO.File]::WriteAllText((Join-Path $app 'tools\notes.txt'), 'x')
   $S.Locked = @('locked.dll', 'notes.txt')
   Eq (Invoke-Prepare) 7 'H5 locked file: rc 7'
-  Eq $script:Result['busy'] 'locked.dll' 'H5 only exe/dll are judged'
+  Eq $script:Result['busy'] 'tools\locked.dll' 'H5 only exe/dll are judged (relative path, H013)'
   Eq @(Kills).Count 0 'H5 nothing to end'
   Test-NoBackup
 }
@@ -742,7 +744,7 @@ Invoke-Case 'h9-upgrade-from-0.1.1' {
   Eq (Invoke-Prepare) 0 'H9 upgrade prepare rc'
   Ok ($script:Result['prepare'] -match '^backup config-0\.1\.1-') 'H9 upgrade backup names the old version'
   Eq (Invoke-PostInstall) 0 'H9 upgrade post-install rc'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.2' 'H9 upgrade version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.3' 'H9 upgrade version file'
 }
 Invoke-Case 'h10-unreadable-path' {
   Initialize-FakeInstall
@@ -789,7 +791,7 @@ Invoke-Case 'h11-real-query-by-path' {
     Eq $found.Count 1 'H11 real query: one process under {app}'
     Ok ($found.Count -eq 1 -and $found[0].Id -eq $pa.Id) 'H11 real query: the copy in {app}, not the one elsewhere'
     Ok (@(Get-RealProcessSnapshot | Where-Object { $_.Id -eq $pb.Id }).Count -eq 1) 'H11 the other copy is visible but not selected'
-    Ok (@(Get-BusyAppFiles) -contains $name) 'H11 real running exe reads as locked'
+    Ok (@(Get-BusyAppFiles) -contains "tools\$name") 'H11 real running exe reads as locked'
   }
   finally { [void]$pa.WaitForExit(20000); [void]$pb.WaitForExit(20000) }
   Ok ($pa.HasExited -and $pb.HasExited) 'H11 both copies ended by themselves'
@@ -813,6 +815,386 @@ Invoke-Case 'h12-taskkill-filter' {
 }
 Invoke-Case 'h13-helper-ascii' {
   Eq @([IO.File]::ReadAllBytes($Helper) | Where-Object { $_ -gt 127 }).Count 0 'H13 arbs-h-setup.ps1 stays ASCII'
+}
+
+# ---------------- H013 O5: locks in sub folders, programs outside {app} (L1-L9) ----------------
+# Lock model: a file is busy while a holder in $S.Holders is still in $S.Procs; the fake Restart Manager answers with
+# those holders. Ending a process (taskkill fake) releases its locks.
+function Initialize-FakeLocks {
+  $script:FileBusyProbe = { param($Path)
+    $leaf = Split-Path -Leaf $Path; $ids = @($S.Procs | ForEach-Object { $_.Id })
+    @($S.Holders | Where-Object { ($ids -contains $_.Id) -and ($_.Files -contains $leaf) }).Count -gt 0 }
+  $script:LockerProbe = { param($Paths)
+    $S.LockerCalls++
+    if ($S.LockerThrows) { throw 'fake Restart Manager failure' }
+    $leaves = @($Paths | ForEach-Object { Split-Path -Leaf $_ }); $ids = @($S.Procs | ForEach-Object { $_.Id })
+    @($S.Holders | Where-Object { $h = $_; ($ids -contains $h.Id) -and @($h.Files | Where-Object { $leaves -contains $_ }).Count -gt 0 } |
+      ForEach-Object { [pscustomobject]@{ Id = $_.Id; Name = $_.App } }) }
+}
+function Add-AppFile([string]$Rel) { $p = Join-Path $app $Rel; New-Item -ItemType Directory -Path (Split-Path -Parent $p) -Force | Out-Null; [IO.File]::WriteAllText($p, 'x') }
+
+Invoke-Case 'l1-subfolder-locked-outside' {
+  Initialize-FakeInstall; Initialize-FakeLocks
+  Add-AppFile 'drivers\sudovda\x.dll'
+  [void]$S.Procs.Add((New-FakeProc 1101 'explorer.exe' 'C:\Windows\explorer.exe'))
+  [void]$S.Holders.Add(@{ Id = 1101; App = 'Windows Explorer'; Files = @('x.dll') })
+  Eq (Invoke-Prepare) 8 'L1 file in a sub folder held by a program outside {app}: rc 8'
+  Eq @(Kills).Count 0 'L1 the outside program is never ended'
+  Eq $script:Result['busy'] 'drivers\sudovda\x.dll' 'L1 busy is the path relative to {app}'
+  Eq $script:Result['locked-by'] 'Windows Explorer (PID 1101)' 'L1 locked-by names the program'
+  Eq $script:Result['prepare'] 'locked-by-other' 'L1 prepare result'
+  Test-NoBackup   # L7: rc 8 comes before the backup
+}
+Invoke-Case 'l2-inside-process-lock' {
+  Initialize-FakeInstall; Initialize-FakeLocks
+  Add-AppFile 'drivers\sudovda\x.dll'
+  [void]$S.Procs.Add((New-FakeProc 1201 'sunshine.exe' "$app\sunshine.exe"))
+  [void]$S.Holders.Add(@{ Id = 1201; App = 'ARBS-H'; Files = @('x.dll') })
+  Eq (Invoke-Prepare) 0 'L2 lock by a process under {app}: rc 0'
+  Eq (Kills) @(KillCmd 1201 'sunshine.exe') 'L2 that process is ended as before'
+  Eq $S.LockerCalls 0 'L2 no lock owner query needed'
+}
+Invoke-Case 'l3-inside-and-outside' {
+  Initialize-FakeInstall; Initialize-FakeLocks
+  Add-AppFile 'tools\x.dll'
+  [void]$S.Procs.Add((New-FakeProc 1301 'sunshine.exe' "$app\sunshine.exe"))
+  [void]$S.Procs.Add((New-FakeProc 1302 'editor.exe' 'C:\Tools\Editor\editor.exe'))
+  [void]$S.Holders.Add(@{ Id = 1301; App = 'ARBS-H'; Files = @('x.dll') })
+  [void]$S.Holders.Add(@{ Id = 1302; App = 'Editor'; Files = @('x.dll') })
+  Eq (Invoke-Prepare) 8 'L3 rc 8'
+  Eq (Kills) @(KillCmd 1301 'sunshine.exe') 'L3 only the {app} process is ended'
+  Ok (@($S.Procs | Where-Object { $_.Id -eq 1302 }).Count -eq 1) 'L3 the outside program keeps running'
+  Eq $script:Result['locked-by'] 'Editor (PID 1302)' 'L3 locked-by names only the outside program'
+}
+Invoke-Case 'l4-config-ignored' {
+  Initialize-FakeInstall; Initialize-FakeLocks
+  Add-AppFile 'config\x.dll'; Add-AppFile 'config\sub\y.dll'; Add-AppFile 'config.migrating\z.dll'
+  [void]$S.Procs.Add((New-FakeProc 1401 'editor.exe' 'C:\Tools\editor.exe'))
+  [void]$S.Holders.Add(@{ Id = 1401; App = 'Editor'; Files = @('x.dll', 'y.dll', 'z.dll') })
+  Eq (Invoke-Prepare) 0 'L4 locked files in config folders (never replaced) do not block: rc 0'
+  Ok (-not $script:Result.Contains('busy')) 'L4 no busy'
+  Eq $S.LockerCalls 0 'L4 no lock owner query'
+}
+Invoke-Case 'l5-junction-not-entered' {
+  Initialize-FakeInstall; Initialize-FakeLocks
+  $target = Join-Path $root 'outside-target'
+  New-Item -ItemType Directory -Path $target -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $target 'z.dll'), 'x')
+  $link = Join-Path $app 'linked'
+  New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+  try {
+    [void]$S.Procs.Add((New-FakeProc 1501 'other.exe' 'C:\Other\other.exe'))
+    [void]$S.Holders.Add(@{ Id = 1501; App = 'Other'; Files = @('z.dll') })
+    Ok (((Get-Item -LiteralPath $link -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'L5 fixture is a junction'
+    Eq @(Get-AppBinaryFiles | Where-Object { $_ -like "$link*" }).Count 0 'L5 scan does not enter the junction'
+    Eq (Invoke-Prepare) 0 'L5 file behind the junction is not judged: rc 0'
+  }
+  finally { [IO.Directory]::Delete($link) }
+  Ok (Test-Path -LiteralPath (Join-Path $target 'z.dll')) 'L5 junction target untouched'
+}
+Invoke-Case 'l6-locker-query-fails' {
+  Initialize-FakeInstall; Initialize-FakeLocks
+  Add-AppFile 'tools\x.dll'
+  [void]$S.Procs.Add((New-FakeProc 1601 'editor.exe' 'C:\Tools\editor.exe'))
+  [void]$S.Holders.Add(@{ Id = 1601; App = 'Editor'; Files = @('x.dll') })
+  $S.LockerThrows = $true
+  Eq (Invoke-Prepare) 8 'L6 Restart Manager failure: rc 8 (file name still reported)'
+  Eq $script:Result['locked-by'] 'unknown' 'L6 locked-by=unknown'
+  Eq $script:Result['busy'] 'tools\x.dll' 'L6 busy kept'
+  Eq @(Kills).Count 0 'L6 nothing ended'
+}
+Invoke-Case 'l6b-holder-path-unknown' {
+  Initialize-FakeInstall; Initialize-FakeLocks
+  Add-AppFile 'tools\x.dll'
+  [void]$S.Procs.Add((New-FakeProc 1611 'sunshine.exe' ''))
+  [void]$S.Holders.Add(@{ Id = 1611; App = 'sunshine'; Files = @('x.dll') })
+  Eq (Invoke-Prepare) 8 'L6b holder whose path cannot be read counts as outside: rc 8'
+  Eq @(Kills).Count 0 'L6b and is not ended'
+}
+Invoke-Case 'l8-retry-after-close' {
+  Initialize-FakeInstall; Initialize-FakeLocks
+  Add-AppFile 'tools\x.dll'
+  $other = New-FakeProc 1801 'editor.exe' 'C:\Tools\editor.exe'
+  [void]$S.Procs.Add($other)
+  [void]$S.Holders.Add(@{ Id = 1801; App = 'Editor'; Files = @('x.dll') })
+  Eq (Invoke-Prepare) 8 'L8 first prepare: rc 8'
+  Eq $script:Result['service-before'] 'RUNNING' 'L8/V4 first prepare sees the service running'
+  Test-NoBackup
+  [void]$S.Procs.Remove($other)   # the user closes the program and presses [Retry]: the installer runs prepare again
+  $script:Result.Clear()
+  Eq (Invoke-Prepare) 0 'L8 retry: rc 0'
+  Eq $script:Result['service-before'] 'STOPPED' 'V4 the retry sees it stopped (the installer keeps the first value, T6)'
+  Eq @($script:Plan | Where-Object { $_ -match '^robocopy' }).Count 1 'L8 one backup'
+  Eq @(Get-ChildItem -LiteralPath (Join-Path $data 'backup') -Directory).Count 1 'L8 one backup folder'
+  Eq @(Kills).Count 0 'L8 nothing ended'
+}
+Invoke-Case 'l0-dryrun-no-restart-manager' {
+  Add-AppFile 'tools\x.dll'
+  Eq @(Get-FileLockers @((Join-Path $app 'tools\x.dll'))).Count 0 'DryRun without a probe asks nobody'
+  Ok ($null -eq ('ArbsH.RestartManagerQuery' -as [type])) 'DryRun did not load the Restart Manager type (no Add-Type)'
+}
+Invoke-Case 'l9-real-restart-manager' {
+  # Real Restart Manager query on a scratch file this test holds itself. Query only: nothing is shut down or ended.
+  $f = Join-Path $app 'tools\rm-probe.dll'
+  New-Item -ItemType Directory -Path (Split-Path -Parent $f) -Force | Out-Null
+  [IO.File]::WriteAllBytes($f, [byte[]](1, 2, 3))
+  Eq @(Get-RealFileLockers @($f)).Count 0 'L9 real query: free file has no holder'
+  $h = [IO.File]::Open($f, 'Open', 'ReadWrite', 'None')
+  try { $l = @(Get-RealFileLockers @($f)) } finally { $h.Dispose() }
+  Eq $l.Count 1 'L9 real query: one holder'
+  Ok ($l.Count -eq 1 -and $l[0].Id -eq $PID) 'L9 real query: the holder is this test process'
+  Eq @(Get-RealFileLockers @($f)).Count 0 'L9 real query: free again after close'
+  Eq @(Kills).Count 0 'L9 nothing ended'
+}
+
+# ---------------- H013 O3: uninstall ends the ARBS-H processes first (U1-U7) ----------------
+function Initialize-FakeUninstall {
+  Initialize-FakeInstall
+  New-Item -ItemType Directory -Path (Join-Path $data 'rollback') -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $data 'rollback\apolloservice.json'), '{"Service":"ApolloService","StartType":2,"Delayed":false,"State":"RUNNING"}')
+}
+Invoke-Case 'u1-uninstall-order' {
+  Initialize-FakeUninstall
+  [void]$S.Procs.Add((New-FakeProc 2101 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  [void]$S.Procs.Add((New-FakeProc 2102 'sunshine.exe' "$app\sunshine.exe"))
+  [IO.File]::WriteAllText((Join-Path $app 'unins000.exe'), 'x'); $S.Locked = @('unins000.exe')
+  $RestoreVibepollo = $true
+  Eq (Invoke-Uninstall) 0 'U1 rc'
+  Eq (Mutations) @('sc.exe stop ARBSHService', (KillCmd 2102 'sunshine.exe'), (KillCmd 2101 $script:HelperExe), 'sc.exe delete ARBSHService',
+    'netsh.exe advfirewall firewall delete rule name="ARBS-H"', 'netsh.exe advfirewall firewall delete rule name="ARBS-H Service"',
+    'schtasks.exe /Delete /TN "\ARBS-H-DisplayRestore" /F',
+    'sc.exe config ApolloService start= auto', 'sc.exe start ApolloService') 'U1 service stop -> taskkill -> service delete -> firewall -> task -> Vibepollo restore'
+  Eq $script:Result['app-processes'] 'stopped 2' 'U1 both ended'
+  Ok (-not $script:Result.Contains('uninstall-left')) 'U1 nothing left (the running uninstaller unins000.exe is not judged)'
+  Ok (-not ((Mutations) -match 'pnputil|\\drivers\\')) 'U1/V3 no driver command'
+}
+Invoke-Case 'u2-other-path-same-name' {
+  Initialize-FakeUninstall
+  [void]$S.Procs.Add((New-FakeProc 2111 $script:HelperExe "C:\Vibepollo\tools\$($script:HelperExe)"))
+  [void]$S.Procs.Add((New-FakeProc 2112 'sunshine.exe' 'C:\Vibepollo\sunshine.exe'))
+  [void]$S.Procs.Add((New-FakeProc 2113 'sunshine.exe' 'C:\Apollo\sunshine.exe'))
+  Eq (Invoke-Uninstall) 0 'U2 rc'
+  Eq @(Kills).Count 0 'U2 Vibepollo/Apollo processes with the same names are not ended'
+  Eq @($S.Procs).Count 3 'U2 all still running'
+}
+Invoke-Case 'u3-restore-wait-before-task-delete' {
+  Initialize-FakeUninstall
+  $S.TaskPresent = $true; $S.HelperGoneAfter = 8
+  [void]$S.Procs.Add((New-FakeProc 2121 'sunshine.exe' "$app\sunshine.exe"))
+  [void]$S.Procs.Add((New-FakeProc 2122 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  Eq (Invoke-Uninstall) 0 'U3 rc'
+  $plan = @($script:Plan)
+  $iQuery = [array]::IndexOf($plan, 'schtasks.exe /Query /TN "\ARBS-H-DisplayRestore"')
+  $iDelete = [array]::IndexOf($plan, 'schtasks.exe /Delete /TN "\ARBS-H-DisplayRestore" /F')
+  Ok ($iQuery -ge 0 -and $iDelete -gt $iQuery) "U3 restore task checked ($iQuery) before it is deleted ($iDelete)"
+  Eq (Kills) @(KillCmd 2121 'sunshine.exe') 'U3 the helper finished its restore by itself'
+}
+Invoke-Case 'u4-process-will-not-end' {
+  Initialize-FakeUninstall
+  $S.KillWorks = $false
+  [void]$S.Procs.Add((New-FakeProc 2131 $script:HelperExe "$app\tools\$($script:HelperExe)"))
+  $RestoreVibepollo = $true
+  Eq (Invoke-Uninstall) 7 'U4 rc reports what is left'
+  Eq $script:Result['uninstall-left'] "tools\$($script:HelperExe)" 'U4 uninstall-left names the file'
+  Ok ((Mutations) -contains 'sc.exe delete ARBSHService') 'U4 uninstall continues (service deleted)'
+  Ok ((Mutations) -contains 'sc.exe config ApolloService start= auto') 'U4 Vibepollo restore still runs'
+  Ok ("$($script:Result['vibepollo'])" -like 'restored *') 'U4 vibepollo restored'
+}
+Invoke-Case 'u5-config-delete-fails' {
+  Initialize-FakeUninstall
+  $logs = Join-Path $app 'config\logs'
+  New-Item -ItemType Directory -Path $logs -Force | Out-Null
+  $held = Join-Path $logs 'sunshine.log'
+  [IO.File]::WriteAllText($held, 'log')
+  $RemoveConfig = $true; $RestoreVibepollo = $true
+  $h = [IO.File]::Open($held, 'Open', 'ReadWrite', 'None')
+  try { $rc = Invoke-Uninstall } finally { $h.Dispose() }
+  Eq $rc 0 'U5 rc (what is left is reported, not an error)'
+  Eq $script:Result['config'] 'partly-removed' 'U5 config result'
+  Eq $script:Result['left-config'] (Join-Path $app 'config') 'U5 left-config names the folder'
+  Ok ((Mutations) -contains 'sc.exe start ApolloService') 'U5 Vibepollo restore runs after a failed delete'
+}
+Invoke-Case 'u6-not-arbs-folder' {
+  Initialize-FakeUninstall
+  Remove-Item -LiteralPath (Join-Path $app 'arbs-h-version.txt')
+  $S.Services.ARBSHService.Bin = '"C:\Elsewhere\tools\sunshinesvc.exe"'
+  [void]$S.Procs.Add((New-FakeProc 2141 'sunshine.exe' "$app\sunshine.exe"))
+  Eq (Invoke-Uninstall) 0 'U6 rc'
+  Eq @(Kills).Count 0 'U6 not an ARBS-H folder: no taskkill'
+  Eq $script:Result['app-processes'] 'skipped-not-arbs-folder' 'U6 result'
+}
+
+# ---------------- H013 O4: post-install failure puts the service back (P1-P11) ----------------
+# Upgrade after prepare: ARBS-H 0.1.2 installed, automatic, stopped by prepare (it was running).
+function Initialize-FakeAfterPrepare {
+  Initialize-FakeInstall
+  $S.Services.ARBSHService.State = 'STOPPED'
+}
+function StartCount { @(Mutations | Where-Object { $_ -eq 'sc.exe start ARBSHService' }).Count }
+Invoke-Case 'p1-firewall-fails-restore' {
+  Initialize-FakeAfterPrepare
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  $S.Exits['^netsh\.exe advfirewall firewall add rule name="ARBS-H"'] = 1
+  Eq (Invoke-PostInstall) 1 'P1 rc 1'
+  Eq $script:Result['reason'] 'firewall rule failed' 'P1 reason in one line'
+  Eq $script:Result['service-restore'] 'restored-running' 'P1 service back'
+  Eq $script:Result['start'] 'restored-running' 'P1 start result'
+  Eq (StartCount) 1 'P1 one start'
+  Eq $S.Services.ARBSHService.State 'RUNNING' 'P1 running again'
+  Eq $S.Services.ARBSHService.Start 2 'P1 still automatic'
+  Ok (-not ((Mutations) -match 'ApolloService')) 'P1 Vibepollo untouched'
+}
+Invoke-Case 'p2-service-registration-fails' {
+  Initialize-FakeAfterPrepare
+  $S.Services.ARBSHService.Bin = '"C:\old\tools\sunshinesvc.exe"'
+  $S.Exits['^sc\.exe config ARBSHService binPath='] = 5
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  Eq (Invoke-PostInstall) 1 'P2 rc 1'
+  Eq $script:Result['reason'] 'service registration: config-failed' 'P2 reason'
+  Eq $script:Result['service-restore'] 'restored-running' 'P2 service back'
+  Eq $S.Services.ARBSHService.State 'RUNNING' 'P2 running again'
+}
+Invoke-Case 'p3-template-missing-stopped-before' {
+  Initialize-FakeAfterPrepare
+  Remove-Item -LiteralPath (Join-Path $app 'config') -Recurse -Force
+  $S.Services.ARBSHService.Start = 3
+  $PrevStart = 'demand'; $PrevState = 'STOPPED'
+  Eq (Invoke-PostInstall) 1 'P3 rc 1'
+  Eq $script:Result['reason'] 'default configuration: template-missing' 'P3 reason'
+  Eq $script:Result['service-restore'] 'stopped-as-before' 'P3 stays stopped as before'
+  Eq $script:Result['start'] 'not-started' 'P3 start result'
+  Eq (StartCount) 0 'P3 no start'
+  Ok (-not ((Mutations) -match '^sc\.exe config ARBSHService start=')) 'P3 start type already as before'
+}
+Invoke-Case 'p3b-start-type-restored' {
+  Initialize-FakeAfterPrepare
+  Remove-Item -LiteralPath (Join-Path $app 'config') -Recurse -Force
+  $S.Services.ARBSHService.Start = 3
+  $PrevStart = 'delayed-auto'; $PrevState = 'STOPPED'
+  Eq (Invoke-PostInstall) 1 'P3b rc 1'
+  Ok ((Mutations) -contains 'sc.exe config ARBSHService start= delayed-auto') 'P3b start type put back'
+  Eq $S.Services.ARBSHService.Delayed $true 'P3b delayed automatic again'
+  Eq (StartCount) 0 'P3b not started (it was stopped)'
+}
+Invoke-Case 'p4-exception-in-step' {
+  Initialize-FakeAfterPrepare
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  $script:Runner = { param($Exe, $Arguments) if ($Exe -eq 'pnputil.exe') { throw "fake pnputil crash`r`nsecond line" }; Invoke-Fake $S $root $Exe $Arguments }
+  Eq (Invoke-PostInstall) 1 'P4 exception: rc 1'
+  Ok ("$($script:Result['error'])" -like 'fake pnputil crash*') 'P4 error recorded'
+  Eq $script:Result['reason'] 'post-install: fake pnputil crash second line' 'P4/P11 reason is one line'
+  Eq $script:Result['service-restore'] 'restored-running' 'P4 service back'
+}
+Invoke-Case 'p5-acl-failure-stays-manual' {
+  Initialize-FakeAfterPrepare
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  $cred = New-ArbsCredentials $app
+  $S.AclHard[(Get-AclKey (Join-Path $cred 'cacert.pem'))] = $true; Set-FakeAcl $S (Join-Path $cred 'cacert.pem') $script:SddlEmpty
+  Eq (Invoke-PostInstall) 6 'P5 rc 6'
+  Ok (-not $script:Result.Contains('service-restore')) 'P5 no restore over the intended manual state'
+  Eq (StartCount) 0 'P5 no start'
+  Eq $S.Services.ARBSHService.Start 3 'P5 manual'
+}
+Invoke-Case 'p6-port-conflict-stays-manual' {
+  Initialize-FakeAfterPrepare
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  $S.Ports = @(47990)
+  Eq (Invoke-PostInstall) 10 'P6 rc 10'
+  Ok (-not $script:Result.Contains('service-restore')) 'P6 no restore'
+  Eq (StartCount) 0 'P6 no start'
+}
+Invoke-Case 'p7-failure-with-vibepollo-running' {
+  Initialize-FakeAfterPrepare
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  $S.Services.ApolloService.Start = 2; $S.Services.ApolloService.State = 'RUNNING'
+  $S.Exits['^netsh\.exe advfirewall firewall add rule name="ARBS-H"'] = 1
+  Eq (Invoke-PostInstall) 1 'P7 rc 1'
+  Eq $script:Result['service-restore'] 'deferred-conflict' 'P7 not started while Vibepollo takes the ports'
+  Ok ("$($script:Result['start'])" -like 'deferred-conflict *') 'P7 start result'
+  Eq (StartCount) 0 'P7 no sc start'
+  Ok (-not ((Mutations) -match 'ApolloService')) 'P7 Vibepollo untouched'
+}
+Invoke-Case 'p7b-failure-with-port-in-use' {
+  Initialize-FakeAfterPrepare
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  $S.Ports = @(47989)
+  $S.Exits['^netsh\.exe advfirewall firewall add rule name="ARBS-H"'] = 1
+  Eq (Invoke-PostInstall) 1 'P7b rc 1'
+  Eq $script:Result['service-restore'] 'deferred-conflict' 'P7b port in use: not started'
+  Eq (StartCount) 0 'P7b no sc start'
+}
+Invoke-Case 'p8-start-fails' {
+  Initialize-FakeAfterPrepare
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  $S.Exits['^sc\.exe start ARBSHService'] = 1053
+  Eq (Invoke-PostInstall) 1 'P8 rc 1'
+  Eq $script:Result['start'] 'failed' 'P8 start = failed'
+  Eq $script:Result['reason'] 'service start failed (sc start exit 1053)' 'P8 reason'
+  Eq (StartCount) 1 'P8 no second start by the restore'
+  Ok (-not $script:Result.Contains('service-restore')) 'P8 no restore after the start step'
+}
+Invoke-Case 'p9-start-not-running' {
+  Initialize-FakeAfterPrepare
+  $PrevStart = 'auto'; $PrevState = 'RUNNING'
+  $S.Exits['^sc\.exe start ARBSHService'] = 0   # request accepted, service never reaches RUNNING
+  Eq (Invoke-PostInstall) 1 'P9 rc 1'
+  Eq $script:Result['start'] 'failed' 'P9 start = failed (not auto-started)'
+  Eq $script:Result['reason'] 'service did not reach RUNNING after start' 'P9 reason'
+}
+Invoke-Case 'p10-first-install-fails' {
+  New-Item -ItemType Directory -Path (Join-Path $app 'config-template') -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $app 'config-template\sunshine.conf'), 'template')
+  $PrevStart = 'none'; $PrevState = 'NONE'
+  $S.Exits['^netsh\.exe advfirewall firewall add rule name="ARBS-H"'] = 1
+  Eq (Invoke-PostInstall) 1 'P10 rc 1'
+  Eq $script:Result['service-restore'] 'not-needed' 'P10 nothing to restore'
+  Eq (StartCount) 0 'P10 no start'
+}
+Invoke-Case 'p11-reason-one-line' {
+  Set-Reason ("first`r`nsecond`tthird " + ('x' * 200))
+  $r = "$($script:Result['reason'])"
+  Ok ($r -notmatch "[`r`n`t]") 'P11 no line break'
+  Ok ($r.Length -le 120) "P11 at most 120 characters ($($r.Length))"
+  Ok ($r.StartsWith('first second third ')) 'P11 text kept'
+  Set-Reason 'later cause'
+  Ok ($script:Result['reason'].StartsWith('first')) 'P11 the first cause stays'
+}
+
+# ---------------- H013: update, reinstall and uninstall of 0.1.3 (V1-V3; V4 is in l8 + T6) ----------------
+Invoke-Case 'v1-update-0.1.2-to-0.1.3' {
+  Initialize-FakeInstall
+  [void]$S.Procs.Add((New-FakeProc 2201 'sunshine.exe' "$app\sunshine.exe"))
+  Eq (Invoke-Prepare) 0 'V1 prepare rc'
+  Eq $script:Result['service-before'] 'RUNNING' 'V1 service-before'
+  Eq $script:Result['service-start-before'] 'auto' 'V1 service-start-before'
+  Ok ($script:Result['prepare'] -match '^backup config-0\.1\.2-') 'V1 backup names 0.1.2'
+  $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
+  Eq (Invoke-PostInstall) 0 'V1 post-install rc'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.3' 'V1 version file 0.1.3'
+  Eq $script:Result['start'] 'auto-started' 'V1 auto-started'
+  Ok (-not $script:Result.Contains('service-restore')) 'V1 no restore on success'
+}
+Invoke-Case 'v2-reinstall-0.1.3' {
+  Initialize-FakeInstall
+  [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.1.3')
+  Eq (Invoke-Prepare) 0 'V2 prepare rc'
+  Ok ($script:Result['prepare'] -match '^backup config-0\.1\.3-') 'V2 config backed up'
+  $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
+  Eq (Invoke-PostInstall) 0 'V2 post-install rc'
+  Eq $script:Result['service'] 'kept' 'V2 service kept'
+  Eq $script:Result['start'] 'auto-started' 'V2 started'
+}
+Invoke-Case 'v3-uninstall-0.1.3-remove' {
+  Initialize-FakeInstall
+  [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.1.3')
+  [void]$S.Procs.Add((New-FakeProc 2301 'sunshine.exe' "$app\sunshine.exe"))
+  $RemoveConfig = $true
+  Eq (Invoke-Uninstall) 0 'V3 rc'
+  Eq (Mutations) @('sc.exe stop ARBSHService', (KillCmd 2301 'sunshine.exe'), 'sc.exe delete ARBSHService',
+    'netsh.exe advfirewall firewall delete rule name="ARBS-H"', 'netsh.exe advfirewall firewall delete rule name="ARBS-H Service"',
+    'schtasks.exe /Delete /TN "\ARBS-H-DisplayRestore" /F') 'V3 commands (no driver or Vibepollo command)'
+  Eq $script:Result['config'] 'removed' 'V3 config removed'
+  Eq $script:Result['drivers'] 'kept' 'V3 drivers kept'
 }
 
 # ---------------- T5 rollback ----------------
@@ -900,9 +1282,27 @@ Eq $prepRc 7 'CLI prepare with a locked exe exits 7'
 Ok $stillRunning 'CLI prepare ended no process (DryRun)'
 $resLines = @(Get-Content -LiteralPath $resFile)
 Ok ($resLines -contains 'service-before=STOPPED') 'CLI result has service-before'
-Ok ($resLines -contains 'busy=arbs-fix1-cli.exe') 'CLI result has busy=<file name>'
+Ok ($resLines -contains 'busy=tools\arbs-fix1-cli.exe') 'CLI result has busy=<relative file name>'
 Ok ($resLines -contains 'prepare=app-busy') 'CLI result has prepare=app-busy'
 Ok (-not (Test-Path -LiteralPath (Join-Path $cli2Data 'backup'))) 'CLI rc 7: no backup'
+
+# H013 O4: the installer's post-install call with -PrevStart/-PrevState. An unexpected value must not stop parameter
+# binding; the result file carries reason= and service-restore=.
+$cli3 = Join-Path $Scratch 'cli-post'
+$cli3App = Join-Path $cli3 'app'; $cli3Data = Join-Path $cli3 'ProgramData\ARBS-H'
+New-Item -ItemType Directory -Path (Join-Path $cli3App 'config-template') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $cli3App 'config-template\sunshine.conf'), 'template')
+$fake3 = @(
+  @{ match = '^sc\.exe (qc|query) (ARBSHService|ApolloService)'; exit = 1060; output = '1060' },
+  @{ match = '^netsh\.exe advfirewall firewall add rule'; exit = 1; output = '' })
+($fake3 | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $cli3 'fake.json') -Encoding UTF8
+$res3 = Join-Path $cli3 'post.txt'
+& $ps -NoProfile -ExecutionPolicy Bypass -File $Helper -Action post-install -DryRun -FakeRoot $cli3 -AppDir $cli3App -DataRoot $cli3Data -PrevStart 'type1' -PrevState 'RUNNING' -ResultOut $res3 | Out-Null
+Eq $LASTEXITCODE 1 'CLI post-install with a failed firewall step exits 1'
+$res3Lines = @(Get-Content -LiteralPath $res3)
+Ok ($res3Lines -contains 'reason=firewall rule failed') 'CLI result has reason=<one line>'
+Ok ($res3Lines -contains 'service-restore=not-needed') 'CLI result has service-restore= (odd -PrevStart accepted)'
+Ok (-not (Test-Path -LiteralPath (Join-Path $cli3App 'arbs-h-version.txt'))) 'CLI failed post-install writes no version file'
 
 Eq $global:T_RealExec 0 'real process starts in all cases'
 Write-Host ("arbs-h setup helper tests: {0} passed, {1} failed (scratch {2})" -f $global:T_Pass, $global:T_Fail, $Scratch)

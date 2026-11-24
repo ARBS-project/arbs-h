@@ -9,11 +9,14 @@
 // local includes
 #include "driver_settings.h"
 #include "nvprefs_interface.h"
+#include "src/platform/windows/arbs_h_names.h"
 #include "undo_file.h"
 
 namespace {
 
-  const auto sunshine_program_data_folder = "Sunshine";
+  // H013 N7: %ProgramData%\ARBS-H. The undo file is applied and deleted at start, so the shared
+  // %ProgramData%\Sunshine folder would apply and delete Vibepollo's undo file.
+  const auto arbs_h_program_data_folder = ARBS_H_PROGRAMDATA_DIR_W;
   const auto nvprefs_undo_file_name = "nvprefs_undo.json";
 
   void report_cleanup_failure(const char *message) noexcept {
@@ -84,7 +87,7 @@ namespace nvprefs {
       }
 
       // Prepare undo file path variables
-      pimpl->undo_folder_path = std::filesystem::path(program_data_env) / sunshine_program_data_folder;
+      pimpl->undo_folder_path = std::filesystem::path(program_data_env) / arbs_h_program_data_folder;
       pimpl->undo_file_path = pimpl->undo_folder_path / nvprefs_undo_file_name;
 
       // Dynamically load nvapi library and load driver settings

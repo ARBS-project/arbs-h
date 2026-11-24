@@ -5128,7 +5128,7 @@ namespace {
     appdataW.resize(MAX_PATH);
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdataW.data()))) {
       appdataW.resize(wcslen(appdataW.c_str()));
-      auto path = std::filesystem::path(appdataW) / L"Sunshine";
+      auto path = std::filesystem::path(appdataW) / ARBS_H_USER_DIR_W;  // H013 N11/N12
       std::error_code ec;
       std::filesystem::create_directories(path, ec);
       return path;
@@ -5142,7 +5142,7 @@ namespace {
       DWORD written = GetEnvironmentVariableW(L"APPDATA", envAppData.data(), needed);
       if (written > 0) {
         envAppData.resize(written);
-        auto path = std::filesystem::path(envAppData) / L"Sunshine";
+        auto path = std::filesystem::path(envAppData) / ARBS_H_USER_DIR_W;  // H013 N11/N12
         std::error_code ec;
         std::filesystem::create_directories(path, ec);
         return path;
@@ -5155,12 +5155,12 @@ namespace {
     DWORD tlen = GetTempPathW(MAX_PATH, tempW.data());
     if (tlen > 0 && tlen < MAX_PATH) {
       tempW.resize(tlen);
-      auto path = std::filesystem::path(tempW) / L"Sunshine";
+      auto path = std::filesystem::path(tempW) / ARBS_H_USER_DIR_W;  // H013 N11/N12
       std::error_code ec;
       std::filesystem::create_directories(path, ec);
       return path;
     }
-    auto path = std::filesystem::path(L".") / L"Sunshine";
+    auto path = std::filesystem::path(L".") / ARBS_H_USER_DIR_W;  // H013 N11/N12
     std::error_code ec;
     std::filesystem::create_directories(path, ec);
     return path;

@@ -44,6 +44,7 @@ extern "C" {
 #include "pyrowave_protocol.h"
 #include "pyrowave_bandwidth.h"
 #if defined(_WIN32)
+  #include "platform/windows/arbs_h_names.h"
   #include "platform/windows/misc.h"
 #elif defined(__linux__)
   #include "platform/linux/routed_link.h"
@@ -65,8 +66,10 @@ using namespace std::literals;
 
 #ifdef _WIN32
 namespace {
-  constexpr wchar_t kVulkanHdrLayerGlobalActiveEventName[] = L"Global\\SunshineVirtualHdrActive";
-  constexpr wchar_t kVulkanHdrLayerLocalActiveEventName[] = L"Local\\SunshineVirtualHdrActive";
+  // H013 N1/N2: ARBS-H's own names. The Vulkan HDR layer DLL (not shipped by ARBS-H) still waits on the
+  // old SunshineVirtualHdrActive names, so another product's layer is no longer switched by ARBS-H streams.
+  constexpr wchar_t kVulkanHdrLayerGlobalActiveEventName[] = ARBS_H_VK_HDR_EVENT_GLOBAL_W;
+  constexpr wchar_t kVulkanHdrLayerLocalActiveEventName[] = ARBS_H_VK_HDR_EVENT_LOCAL_W;
 
   std::mutex g_vulkan_hdr_layer_event_mutex;
   HANDLE g_vulkan_hdr_layer_global_event = nullptr;
