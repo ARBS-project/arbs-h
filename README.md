@@ -55,6 +55,7 @@ Status: **experimental**. What has actually been confirmed on real devices is li
 
 GPL-3.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). ARBS notices: [NOTICE-ARBS.md](NOTICE-ARBS.md).
 Security issues: please use the private reporting described in the `arbs` repository `SECURITY.md`.
+Code signing policy (signed files, roles, third-party components, privacy): see the [`arbs` README](https://github.com/ARBS-project/arbs#code-signing-policy).
 
 ---
 
@@ -68,3 +69,4 @@ Releases 목록 조회)만 호출하고 보내는 개인정보는 없습니다(�
 접속 IP가 보임). 끄려면 `sunshine.conf`에 `update_check_interval = 0`, 또는 웹 UI의 Host & diagnostics > Identity and local
 behavior > 업데이트 확인 간격(초)을 0으로. 구형 프로세스 로컬 햅틱 도구 기본 제외. 공식 Vibepollo 설치본과 겹쳐 설치·동시 실행하지 마세요.
 라이선스 GPL-3.0. 상태: 실험적. **Flydigi와 관련 없는 비공식 오픈소스 프로젝트**이며 Vibepollo·Apollo·Sunshine·Moonlight 프로젝트와도 관련이 없습니다.
+코드 서명 정책(서명 대상·역할·제3자 구성요소·개인정보)은 [`arbs` README](https://github.com/ARBS-project/arbs#code-signing-policy)를 보세요.
