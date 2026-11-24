@@ -170,9 +170,45 @@ jobs:
             echo "CMAKE_BUILD_PARALLEL_LEVEL=4"
           } >> "$(cygpath -u "$GITHUB_ENV")"
 
+      - name: VC runtime redistributable (VCToolsRedistDir for packaging)
+        # The /MD TrueHDR runtime needs msvcp140/vcruntime140(_1) from a VC Redist CRT folder.
+        # windows_portable.cmake reads $ENV{VCToolsRedistDir} first (EA-CI1-N-02: runner VS was not found).
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere.exe not found: $vswhere" }
+          $vs = & $vswhere -latest -products '*' -property installationPath | Select-Object -First 1
+          if (-not $vs -or -not (Test-Path -LiteralPath $vs)) { throw 'vswhere returned no Visual Studio installation' }
+          $root = Join-Path $vs 'VC\Redist\MSVC'
+          $pick = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+(\.\d+)+$' } | Sort-Object { [version]$_.Name } -Descending |
+            ForEach-Object {
+              $crt = @(Get-ChildItem -LiteralPath (Join-Path $_.FullName 'x64') -Directory -Filter 'Microsoft.VC14*.CRT' -ErrorAction SilentlyContinue)
+              if ($crt.Count -gt 0) { [pscustomobject]@{ Dir = $_; Crt = $crt } }
+            } | Select-Object -First 1
+          if (-not $pick) { throw "No VC\Redist\MSVC\<version>\x64\Microsoft.VC14*.CRT under $vs" }
+          "VCToolsRedistDir=$($pick.Dir.FullName)\" >> $env:GITHUB_ENV
+          "vs=$vs redist=$($pick.Dir.Name) crt=$(@($pick.Crt.Name) -join ',')" | Tee-Object -FilePath ci-evidence/vc-redist.txt
+
       - name: Configure (r1a_configure.sh, applies the ENet patch)
         shell: msys2 {0}
         run: bash "$ARBS_ROOT/host/scripts/r1a_configure.sh"
+
+      - name: Check VC runtime source for packaging (fails here, not after the build)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pre = 'host/arbs-h/build/portable_pre_build.cmake'
+          if (-not (Test-Path -LiteralPath $pre)) { throw "$pre was not generated" }
+          $m = Select-String -LiteralPath $pre -Pattern '^\s*REDISTRIBUTABLE_DIRS\s+"([^"]*)"' | Select-Object -First 1
+          if (-not $m) { throw "REDISTRIBUTABLE_DIRS not found in $pre" }
+          $dirs = @($m.Matches[0].Groups[1].Value -split ';' | Where-Object { $_ })
+          # Same order as prepare_portable.cmake: the first folder holding the DLL is the copy source.
+          foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            $src = $dirs | Where-Object { Test-Path -LiteralPath (Join-Path $_ $dll) } | Select-Object -First 1
+            if (-not $src) { throw "$dll is in no REDISTRIBUTABLE_DIRS folder: $($dirs -join '; ')" }
+            if ($src -notmatch '/Microsoft\.VC[^/]*\.CRT/?$') { throw "$dll would come from $src, not a Microsoft.VC*.CRT folder" }
+            "$dll <- $src" | Tee-Object -FilePath ci-evidence/vc-redist.txt -Append
+          }
 
       - name: Build (b1_build.sh)
         shell: msys2 {0}
