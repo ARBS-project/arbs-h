@@ -10,3 +10,8 @@ updates:
       cronjob: "30 2 * * *"
       timezone: "America/New_York"
     open-pull-requests-limit: 0
+  # CI1: pinned GitHub Actions (commit SHA) only, once a month. Other dependencies unchanged.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

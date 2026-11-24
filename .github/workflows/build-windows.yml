@@ -1,0 +1,286 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# ARBS-H Windows build (CI1): builds the ARBS-H setup.exe the same way as the local build PC
+# (arbs repository build/host scripts, MSYS2 UCRT64, Inno Setup) and keeps it only as a workflow artifact.
+# No release, no tag, no signing (the SignPath steps at the end are disabled until CI2).
+name: build-windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ARBS-project/arbs commit that provides build/host scripts and the ENet patch (update by hand; Dependabot does not).
+  ARBS_BUILD_SHA: bc03dc85eff0613a88a4ac1b3c094cd6186eae60
+  # Pinned upstream TrueHDR runtime (Nonary/vibeshine_truehdr_runtime v1.0.0), checked before use.
+  TRUEHDR_ZIP_URL: https://github.com/Nonary/vibeshine_truehdr_runtime/releases/download/v1.0.0/vibeshine-truehdr-runtime-1.0.0-windows-x64.zip
+  TRUEHDR_ZIP_SHA256: 1e1e5c4d231900fec78375f0ced643bb3e7dafa5d6e0325474e4412a30ea4abf
+  TRUEHDR_VIBESHINE_DLL_SHA256: 17e69dc6edf0c171adea981e3fbc49199d5326c068234093860554fe5cc824b8
+  TRUEHDR_NVNGX_DLL_SHA256: 9a80575f247190c05fe80eac0c4baa1d0d4d932348f26808310b5ec4bf9eeb4b
+
+jobs:
+  build:
+    name: ARBS-H setup.exe
+    runs-on: windows-2025
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Runner image
+        run: |
+          New-Item -ItemType Directory -Force -Path ci-evidence | Out-Null
+          "ImageOS=$env:ImageOS ImageVersion=$env:ImageVersion" | Tee-Object -FilePath ci-evidence/runner.txt
+
+      - name: Checkout arbs-h
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: host/arbs-h
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout arbs (build scripts)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ARBS-project/arbs
+          ref: ${{ env.ARBS_BUILD_SHA }}
+          path: _arbs
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Place build scripts like the local build PC
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path host/scripts, host/patches | Out-Null
+          Copy-Item -Path _arbs/build/host/* -Destination host/scripts/ -Force
+          Copy-Item -LiteralPath _arbs/build/patches/enet-c7353c05-arbs-precise-time.patch -Destination host/patches/ -Force
+          Get-ChildItem host/scripts, host/patches | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c  # v2.34.0
+        with:
+          msystem: UCRT64
+          update: true
+          cache: true
+          # MSYS2 is a rolling repository: exact versions cannot be pinned here. The next step records them.
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-boost
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-cppwinrt
+            mingw-w64-ucrt-x86_64-curl-winssl
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libjpeg-turbo
+            mingw-w64-ucrt-x86_64-libpng
+            mingw-w64-ucrt-x86_64-libwebp
+            mingw-w64-ucrt-x86_64-MinHook
+            mingw-w64-ucrt-x86_64-miniupnpc
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-nlohmann-json
+            mingw-w64-ucrt-x86_64-onevpl
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-tools
+
+      - name: Record MSYS2 packages
+        shell: msys2 {0}
+        run: |
+          ev="$(cygpath -u "$GITHUB_WORKSPACE")/ci-evidence"
+          pacman -Q > "$ev/msys2-packages.txt"
+          # Versions of the local 0.1.3 build. A difference is only a warning (the build decides).
+          for want in mingw-w64-ucrt-x86_64-gcc:16.2.0-7 mingw-w64-ucrt-x86_64-cmake:4.5.0-1 \
+                      mingw-w64-ucrt-x86_64-boost:1.92.0-4 mingw-w64-ucrt-x86_64-openssl:4.1.0-1 \
+                      mingw-w64-ucrt-x86_64-curl-winssl:8.23.0-3 mingw-w64-ucrt-x86_64-opus:1.6.1-2; do
+            pkg=${want%%:*}; ver=${want#*:}
+            got=$(pacman -Q "$pkg" 2>/dev/null | awk '{print $2}')
+            if [ "$got" != "$ver" ]; then echo "::warning::$pkg $got (local build used $ver)"; fi
+            echo "$pkg local=$ver ci=$got" >> "$ev/msys2-key-versions.txt"
+          done
+          cat "$ev/msys2-key-versions.txt"
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 22.22.2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73  # v6.1.0
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
+        with:
+          dotnet-version: 10.0.404
+
+      - name: Tool locations and Inno Setup
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $node = Split-Path -Parent (Get-Command node).Source
+          "ARBS_NODE_DIR_WIN=$node" >> $env:GITHUB_ENV
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) { throw "ISCC.exe not found: $iscc" }
+          $inno = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1' -ErrorAction SilentlyContinue
+          $innoVer = if ($inno) { $inno.DisplayVersion } else { 'unknown' }
+          if ($innoVer -ne '6.7.1') { "::warning::Inno Setup $innoVer (local build used 6.7.1)" }
+          @(
+            "node=$(& node --version) dir=$node"
+            "dotnet=$(& "$env:RUNNER_TEMP\dotnet\dotnet.exe" --version)"
+            "inno=$innoVer"
+          ) | Tee-Object -FilePath ci-evidence/tools.txt
+
+      - name: Place pinned TrueHDR runtime
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'truehdr-runtime.zip'
+          Invoke-WebRequest -Uri $env:TRUEHDR_ZIP_URL -OutFile $zip
+          $h = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($h -ne $env:TRUEHDR_ZIP_SHA256) { throw "TrueHDR runtime zip SHA-256 mismatch: $h" }
+          $x = Join-Path $env:RUNNER_TEMP 'truehdr-runtime'
+          Expand-Archive -LiteralPath $zip -DestinationPath $x -Force
+          $dst = 'host/arbs-h/build/truehdr-runtime'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          $want = @{ 'vibeshine_truehdr.dll' = $env:TRUEHDR_VIBESHINE_DLL_SHA256; 'nvngx_truehdr.dll' = $env:TRUEHDR_NVNGX_DLL_SHA256 }
+          foreach ($name in $want.Keys) {
+            $f = @(Get-ChildItem -LiteralPath $x -Recurse -File -Filter $name)
+            if ($f.Count -ne 1) { throw "$name found $($f.Count) times in the runtime zip" }
+            Copy-Item -LiteralPath $f[0].FullName -Destination $dst -Force
+            $dh = (Get-FileHash -LiteralPath $f[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            # The local DLL hashes are a cross-check only (same zip origin not proven): warn, do not fail.
+            if ($dh -ne $want[$name]) { "::warning::$name SHA-256 $dh differs from the local 0.1.3 build" }
+            "$name $($f[0].Length) $dh" | Tee-Object -FilePath ci-evidence/truehdr-runtime.txt -Append
+          }
+
+      - name: ARBS build environment
+        shell: msys2 {0}
+        run: |
+          root=$(cygpath -u "$GITHUB_WORKSPACE")
+          {
+            echo "ARBS_ROOT=$root"
+            echo "ARBS_TOOLS=$(cygpath -u "$RUNNER_TEMP")/arbs-tools"
+            echo "ARBS_NODE_DIR=$(cygpath -u "$ARBS_NODE_DIR_WIN")"
+            echo "ARBS_DOTNET=$(cygpath -m "$RUNNER_TEMP/dotnet/dotnet.exe")"
+            echo "ARBS_EVIDENCE_DIR=$root/ci-evidence"
+            echo "CMAKE_BUILD_PARALLEL_LEVEL=4"
+          } >> "$(cygpath -u "$GITHUB_ENV")"
+
+      - name: Configure (r1a_configure.sh, applies the ENet patch)
+        shell: msys2 {0}
+        run: bash "$ARBS_ROOT/host/scripts/r1a_configure.sh"
+
+      - name: Build (b1_build.sh)
+        shell: msys2 {0}
+        run: bash "$ARBS_ROOT/host/scripts/b1_build.sh"
+
+      - name: Tests (b1_ctest.sh)
+        # The runner has no GPU or ARBS devices; the first runs decide whether failures here are runner-specific.
+        continue-on-error: true
+        shell: msys2 {0}
+        run: |
+          set -o pipefail
+          bash "$ARBS_ROOT/host/scripts/b1_ctest.sh" 2>&1 | tee "$ARBS_EVIDENCE_DIR/ctest.log"
+
+      - name: Package (r1a_package.sh -> setup.exe, rollback zip)
+        shell: msys2 {0}
+        run: bash "$ARBS_ROOT/host/scripts/r1a_package.sh"
+
+      - name: Report (version info, signature state, sizes; nothing is executed)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Resolve-Path 'host/arbs-h/build/r1a-stage'
+          $files = @(Get-ChildItem -Path 'host/out' -File -Filter 'arbs-h-*-setup.exe')
+          $files += @(Get-ChildItem -LiteralPath $stage -Recurse -File -Include *.exe, *.dll, *.sys)
+          $files | ForEach-Object {
+            $v = $_.VersionInfo
+            $sig = Get-AuthenticodeSignature -LiteralPath $_.FullName
+            $rel = if ($_.FullName.StartsWith($stage.Path)) { 'stage/' + $_.FullName.Substring($stage.Path.Length + 1).Replace('\', '/') } else { 'out/' + $_.Name }
+            [pscustomobject]@{
+              File           = $rel
+              Length         = $_.Length
+              SHA256         = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              ProductName    = $v.ProductName
+              ProductVersion = $v.ProductVersion
+              FileVersion    = $v.FileVersion
+              CompanyName    = $v.CompanyName
+              Signature      = $sig.Status
+              Signer         = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }
+            }
+          } | Export-Csv -Path ci-evidence/pe-report.csv -NoTypeInformation -Encoding utf8
+          Import-Csv ci-evidence/pe-report.csv | Where-Object { $_.File -like 'out/*' } | Format-List
+          Get-ChildItem host/out | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Upload setup
+        id: upload-setup
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: arbs-h-setup
+          path: |
+            host/out/arbs-h-*-setup.exe
+            host/out/arbs-h-*-setup.exe.sha256
+            host/out/arbs-h-*-rollback.zip
+            host/out/arbs-h-*-rollback.zip.sha256
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload CI evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: arbs-h-ci-evidence
+          path: ci-evidence/
+          retention-days: 7
+          if-no-files-found: warn
+
+      # ---------------------------------------------------------------------------------------------
+      # SignPath signing: DISABLED (if: false). Activated only by a later task (CI2) after the user has
+      # been accepted by SignPath Foundation and has entered the token in the repository Secrets himself.
+      # Before activation:
+      #  - r1a_package.sh must be split into "stage" and "ISCC" parts: the files inside the Inno Setup
+      #    exe cannot be signed afterwards, so the stage is signed first (request 1), then ISCC runs,
+      #    then setup.exe is signed (request 2). Configurations: .signpath/artifact-configurations/.
+      #  - Planning decisions still open (TODO in .signpath/artifact-configurations/arbs-h-stage.xml):
+      #    (a) nvngx_truehdr.dll is a non-OSS NVIDIA binary inside the package; (b) tool exe ProductName
+      #    values are not "ARBS-H"; (c) the Inno uninstaller (unins000.exe) is not signed by this flow.
+      # ---------------------------------------------------------------------------------------------
+      - name: Upload stage for signing (disabled, CI2)
+        id: upload-stage
+        if: false
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: arbs-h-stage-unsigned
+          path: host/arbs-h/build/r1a-stage/
+          retention-days: 1
+
+      - name: SignPath - sign stage files (disabled, CI2)
+        if: false
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b  # v3.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: arbs-h
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: arbs-h-stage
+          github-artifact-id: ${{ steps.upload-stage.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: host/arbs-h/build/r1a-stage-signed
+
+      - name: SignPath - sign setup.exe (disabled, CI2)
+        if: false
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b  # v3.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: arbs-h
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: arbs-h-setup
+          # CI2: setup.exe needs its own upload (archive: false, UNVERIFIED for upload-artifact v7) for the
+          # <pe-file> root of arbs-h-setup.xml; otherwise change that root to <zip-file>.
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: host/out/signed

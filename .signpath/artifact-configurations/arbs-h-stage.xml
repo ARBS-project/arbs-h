@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DRAFT / REVIEW COPY of a SignPath artifact configuration (CI1). Not active: the signing steps in
+  .github/workflows/build-windows.yml are disabled (if: false). The SignPath portal is the source of
+  truth once a project exists; editing this file does NOT change signing.
+
+  Slug (assumed, rename to the portal value): arbs-h-stage
+  Input:   the ARBS-H installer stage folder (host/arbs-h/build/r1a-stage), uploaded as a workflow
+           artifact (zip) BEFORE Inno Setup runs. Inno Setup packs the stage into setup.exe and
+           SignPath cannot open an Inno Setup exe, so the files inside must be signed first.
+  Signs:   only PE files built from ARBS-H (arbs-h) sources.
+  Not signed (left byte-for-byte unchanged):
+           drivers/sudovda/* and drivers/usbip-win2/* (upstream, catalog-bound),
+           zlib1.dll (MSYS2), vibeshine_truehdr.dll (upstream release), nvngx_truehdr.dll (NVIDIA),
+           msvcp140.dll / vcruntime140*.dll (Microsoft).
+
+  TODO (planning decision, not decided here):
+   (a) nvngx_truehdr.dll is a proprietary NVIDIA binary shipped in the package. SignPath Foundation
+       terms forbid non-open-source components; decide before applying (keep / drop / ask SignPath).
+   (b) SignPath Foundation requires product name = project name in the file metadata. The tool exe
+       ProductName values are the tool names (e.g. sunshinesvc, audio-info); sunshine.exe UNVERIFIED.
+   (c) The Inno Setup uninstaller (unins000.exe) is generated inside setup.exe and is not signed by
+       this two-request flow.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="sunshine.exe"><authenticode-sign/></pe-file>
+    <pe-file path="tools/audio-info.exe"><authenticode-sign/></pe-file>
+    <pe-file path="tools/dxgi-info.exe"><authenticode-sign/></pe-file>
+    <pe-file path="tools/playnite-launcher.exe"><authenticode-sign/></pe-file>
+    <pe-file path="tools/sunshine_display_helper.exe"><authenticode-sign/></pe-file>
+    <pe-file path="tools/sunshine_end_stream_hotkey.exe"><authenticode-sign/></pe-file>
+    <pe-file path="tools/sunshine_wgc_capture.exe"><authenticode-sign/></pe-file>
+    <pe-file path="tools/sunshinesvc.exe"><authenticode-sign/></pe-file>
+    <pe-file path="plugins/playnite/SunshinePlaynite/VibepolloPlaynite.dll"><authenticode-sign/></pe-file>
+  </zip-file>
+</artifact-configuration>
