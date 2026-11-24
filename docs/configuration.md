@@ -282,7 +282,8 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td>Default</td>
         <td colspan="2">@code{}
             0
-            @endcode (off in ARBS-H development builds; upstream default 86400 = 24 hours)</td>
+            @endcode (ARBS-H development builds: off; ARBS-H installer builds: 86400 = once a day, set at build time by
+            `ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS`. The check only calls the GitHub API releases list and sends no personal data.)</td>
     </tr>
     <tr>
         <td>Example</td>

@@ -30,7 +30,12 @@ ARBS consists of four repositories in the `arbs-project` organisation:
 - DualSense over USB/IP: haptics timing summary and trigger-status bytes for the client (`src/arbs_haptics_timing.h`,
   `src/arbs_trigger_status.h`, `src/platform/windows/dualsense_usbip_gamepad.*`, `src/stream.cpp`).
 - New settings keys `arbs_trigger_status` (default `h2b`) and `arbs_enet_precise_time` (see `docs/configuration.md`).
-- Update check off by default (`update_check_interval` 0) and not run at stream start when disabled.
+- Update check: installer builds check once a day by default (`update_check_interval` 86400, set at build time by
+  `ARBS_H_UPDATE_CHECK_DEFAULT_SECONDS`); development builds default to 0 (off). The check only calls the GitHub API
+  (HTTPS GET of the `arbs-project/arbs-h` releases list). It sends no personal data (no account, host name, hardware or
+  usage data; GitHub sees the connection's IP address as with any HTTPS request). To turn it off, set
+  `update_check_interval = 0` in `sunshine.conf`, or in the web UI: Host & diagnostics > Identity and local behavior >
+  Update Check Interval (seconds) = 0. When it is 0, no periodic check runs and none runs at stream start.
 - The legacy process-local haptics tools (`vibepollo_dualsense_haptics.exe`, `vibepollo_dualsense_audio.dll`) are not built
   or packaged by default (CMake option `ARBS_H_LEGACY_HAPTICS_TOOLS`, default `OFF`).
 - The ARBS-H build also applies a small patch to the bundled ENet (precise time). That patch and the build scripts are in
@@ -58,5 +63,8 @@ Security issues: please use the private reporting described in the `arbs` reposi
 ARBS-H는 Vibepollo 2.18.9(커밋 `c286d0862`)를 바탕으로 한 호스트 포크이며 Vibepollo와 별개 제품입니다. ARBS 클라이언트와 함께
 클라이언트에 연결한 Flydigi APEX 6 Pro에서 호스트 게임의 DualSense 출력(일반 진동·트리거 효과·PCM HD 햅틱)을 느끼게 합니다.
 주요 변경: USB/IP DualSense 햅틱 타이밍·트리거 상태 바이트, 설정 키 `arbs_trigger_status`(기본 h2b)·`arbs_enet_precise_time`,
-업데이트 확인 기본 꺼짐, 구형 프로세스 로컬 햅틱 도구 기본 제외. 공식 Vibepollo 설치본과 겹쳐 설치·동시 실행하지 마세요.
+업데이트 확인은 설치본 기본값 하루 1회(`update_check_interval` 86400, 개발 빌드는 0=꺼짐) — GitHub API(`arbs-project/arbs-h`
+Releases 목록 조회)만 호출하고 보내는 개인정보는 없습니다(계정·호스트 이름·하드웨어·사용 정보 없음, 일반 HTTPS 연결처럼 GitHub에는
+접속 IP가 보임). 끄려면 `sunshine.conf`에 `update_check_interval = 0`, 또는 웹 UI의 Host & diagnostics > Identity and local
+behavior > 업데이트 확인 간격(초)을 0으로. 구형 프로세스 로컬 햅틱 도구 기본 제외. 공식 Vibepollo 설치본과 겹쳐 설치·동시 실행하지 마세요.
 라이선스 GPL-3.0. 상태: 실험적. **Flydigi와 관련 없는 비공식 오픈소스 프로젝트**이며 Vibepollo·Apollo·Sunshine·Moonlight 프로젝트와도 관련이 없습니다.

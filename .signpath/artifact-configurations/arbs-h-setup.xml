@@ -9,8 +9,10 @@
            actions/upload-artifact v7). If that is not possible, use
            <zip-file><pe-file path="arbs-h-*-setup.exe"><authenticode-sign/></pe-file></zip-file>.
   Signs:   the outer setup.exe only.
-  TODO (planning decision): (c) the Inno Setup uninstaller unins000.exe inside setup.exe stays unsigned;
-           see also (a) nvngx_truehdr.dll and (b) ProductName in arbs-h-stage.xml.
+  Decisions: (c) the Inno Setup uninstaller unins000.exe inside setup.exe stays unsigned: accepted
+           (not blocking). (a) nvngx_truehdr.dll (NVIDIA): excluded from signing, kept in the package;
+           this configuration signs only the outer setup.exe and no file inside it. See also (b)
+           ProductName in arbs-h-stage.xml.
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <pe-file>

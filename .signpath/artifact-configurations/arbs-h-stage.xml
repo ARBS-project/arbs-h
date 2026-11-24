@@ -9,18 +9,23 @@
            artifact (zip) BEFORE Inno Setup runs. Inno Setup packs the stage into setup.exe and
            SignPath cannot open an Inno Setup exe, so the files inside must be signed first.
   Signs:   only PE files built from ARBS-H (arbs-h) sources.
-  Not signed (left byte-for-byte unchanged):
+  Exclusion method: this configuration is an explicit allow-list. Every file to sign is listed below
+           by exact path with <authenticode-sign/>; no wildcard file set is used, so any file that is
+           not listed is excluded from signing and passed through unchanged.
+  Not signed (left byte-for-byte unchanged, third-party binaries):
            drivers/sudovda/* and drivers/usbip-win2/* (upstream, catalog-bound),
            zlib1.dll (MSYS2), vibeshine_truehdr.dll (upstream release), nvngx_truehdr.dll (NVIDIA),
            msvcp140.dll / vcruntime140*.dll (Microsoft).
 
-  TODO (planning decision, not decided here):
-   (a) nvngx_truehdr.dll is a proprietary NVIDIA binary shipped in the package. SignPath Foundation
-       terms forbid non-open-source components; decide before applying (keep / drop / ask SignPath).
-   (b) SignPath Foundation requires product name = project name in the file metadata. The tool exe
-       ProductName values are the tool names (e.g. sunshinesvc, audio-info); sunshine.exe UNVERIFIED.
+  Decisions:
+   (a) nvngx_truehdr.dll (proprietary NVIDIA RTX Video SDK runtime): decided - excluded from signing,
+       kept in the package. It is NOT listed below and must never be added. The signing application
+       names it as a third-party binary.
+   (b) Product name: the ProductName of exe files built by ARBS-H is set to "ARBS-H" (version info
+       only) in the next ARBS-H release (0.1.4). Until then the tool exe ProductName values are the
+       tool names (e.g. sunshinesvc, audio-info); sunshine.exe UNVERIFIED.
    (c) The Inno Setup uninstaller (unins000.exe) is generated inside setup.exe and is not signed by
-       this two-request flow.
+       this two-request flow: accepted (not blocking).
 -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
