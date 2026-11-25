@@ -18,7 +18,7 @@ concurrency:
 
 env:
   # ARBS-project/arbs commit that provides build/host scripts and the ENet patch (update by hand; Dependabot does not).
-  ARBS_BUILD_SHA: bc03dc85eff0613a88a4ac1b3c094cd6186eae60
+  ARBS_BUILD_SHA: 815649bc223ff2666e1d3e1e8a2e0619472b1127
   # Pinned upstream TrueHDR runtime (Nonary/vibeshine_truehdr_runtime v1.0.0), checked before use.
   TRUEHDR_ZIP_URL: https://github.com/Nonary/vibeshine_truehdr_runtime/releases/download/v1.0.0/vibeshine-truehdr-runtime-1.0.0-windows-x64.zip
   TRUEHDR_ZIP_SHA256: 1e1e5c4d231900fec78375f0ced643bb3e7dafa5d6e0325474e4412a30ea4abf
@@ -222,6 +222,14 @@ jobs:
           set -o pipefail
           bash "$ARBS_ROOT/host/scripts/b1_ctest.sh" 2>&1 | tee "$ARBS_EVIDENCE_DIR/ctest.log"
 
+      - name: ARBS WebUI unit tests (web-arbs)
+        # Same block as r1a_extra_tests.sh 4 (pure logic tests, no browser, no network).
+        shell: msys2 {0}
+        run: |
+          set -o pipefail
+          cd "$ARBS_ROOT/host/arbs-h/src_assets/common/assets/web-arbs"
+          PATH="$ARBS_NODE_DIR:$PATH" node --experimental-strip-types --test scripts/*.test.ts 2>&1 | tee "$ARBS_EVIDENCE_DIR/web-arbs-unit.log"
+
       - name: Package (r1a_package.sh -> setup.exe, rollback zip)
         shell: msys2 {0}
         run: bash "$ARBS_ROOT/host/scripts/r1a_package.sh"
@@ -282,7 +290,8 @@ jobs:
       #    then setup.exe is signed (request 2). Configurations: .signpath/artifact-configurations/.
       #  - Planning decisions still open (TODO in .signpath/artifact-configurations/arbs-h-stage.xml):
       #    (a) nvngx_truehdr.dll is a non-OSS NVIDIA binary inside the package; (b) tool exe ProductName
-      #    values are not "ARBS-H"; (c) the Inno uninstaller (unins000.exe) is not signed by this flow.
+      #    values are "ARBS-H" from 0.2.0 on (D-CI-8, done); (c) the Inno uninstaller (unins000.exe) is not
+      #    signed by this flow.
       # ---------------------------------------------------------------------------------------------
       - name: Upload stage for signing (disabled, CI2)
         id: upload-stage

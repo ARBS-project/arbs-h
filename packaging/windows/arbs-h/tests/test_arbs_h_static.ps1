@@ -11,9 +11,9 @@ param(
   [Parameter(Mandatory = $true)][string]$StageDir,
   [Parameter(Mandatory = $true)][string]$SetupExe,
   [string]$UninstallKeysFile = '',
-  [string]$Version = '0.1.3',
-  # H013 S11: commit the H013 changes start from (0.1.2 = v0.1.2 = 8967d7c87).
-  [string]$BaseCommit = '8967d7c87046c372e80912636c68b78d08024dc9'
+  [string]$Version = '0.2.0',
+  # H013 S11: commit the changes of this release start from (UI1b 0.2.0: v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
+  [string]$BaseCommit = '9bf60beb91994aae7af714d29f33ef6d76bfab11'
 )
 $ErrorActionPreference = 'Stop'
 $pkg = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -61,7 +61,24 @@ $web = Get-ChildItem -LiteralPath (Join-Path $StageDir 'assets\web') -Recurse -F
 $webText = ($web | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
 foreach ($s in @('api.github.com/repos/Nonary', 'github.com/Nonary/Vibepollo/releases', 'vibepollo-dismissed-updates', 'VibepolloSetup')) { Ok (-not $webText.Contains($s)) "web UI bundle has no '$s'" }
 foreach ($s in @('api.github.com/repos/', 'arbs-project', 'arbs-h-dismissed-updates', '<title>ARBS-H</title>')) { Ok ($webText.Contains($s)) "web UI bundle has '$s'" }
-foreach ($ui in @('index.html', 'v2\index.html')) { Ok ([IO.File]::ReadAllText((Join-Path $StageDir "assets\web\$ui")).Contains('<title>ARBS-H</title>')) "$ui title ARBS-H" }
+foreach ($ui in @('index.html', 'v2\index.html', 'arbs\index.html')) { Ok ([IO.File]::ReadAllText((Join-Path $StageDir "assets\web\$ui")).Contains('<title>ARBS-H</title>')) "$ui title ARBS-H" }
+
+# UI1b (0.2.0): ARBS WebUI built into assets\web\arbs (base /arbs/), its sources and node_modules are not shipped,
+# the installer template leaves arbs_webui_default unset (server default arbs).
+$arbsIndex = [IO.File]::ReadAllText((Join-Path $StageDir 'assets\web\arbs\index.html'))
+Ok ($arbsIndex.Contains('/arbs/assets/') -and $arbsIndex.Contains('/arbs/assets/theme-boot.js')) 'UI1b arbs\index.html loads its files from /arbs/assets/ (theme-boot.js external, CSP)'
+Ok (Test-Path -LiteralPath (Join-Path $StageDir 'assets\web\arbs\assets\theme-boot.js')) 'UI1b stage has assets\web\arbs\assets\theme-boot.js'
+Ok (@(Get-ChildItem -LiteralPath (Join-Path $StageDir 'assets\web\arbs\assets') -File -Filter '*.js').Count -ge 2) 'UI1b ARBS WebUI bundle present'
+Ok (-not (Test-Path -LiteralPath (Join-Path $StageDir 'assets\web-arbs'))) 'UI1b stage has no assets\web-arbs source folder'
+Ok (@(Get-ChildItem -LiteralPath $StageDir -Recurse -Directory -Filter 'node_modules' -ErrorAction SilentlyContinue).Count -eq 0) 'UI1b stage has no node_modules'
+Ok (@(Get-ChildItem -LiteralPath (Join-Path $StageDir 'assets\web') -Recurse -File | Where-Object { $_.Name -like '*.vue' -or $_.Name -like 'package*.json' -or $_.Name -like '*.test.ts' }).Count -eq 0) 'UI1b stage web has no source files (.vue, package*.json, tests)'
+Ok (-not ([IO.File]::ReadAllText((Join-Path $pkg 'sunshine.conf'))).Contains('arbs_webui_default')) 'UI1b installer template leaves arbs_webui_default unset'
+# D-CI-8: every exe built by ARBS-H carries ProductName ARBS-H (the bundled nefconc.exe is third-party).
+foreach ($t in @('dxgi-info', 'audio-info', 'sunshinesvc', 'playnite-launcher', 'sunshine_wgc_capture', 'sunshine_end_stream_hotkey', 'sunshine_display_helper')) {
+  $tp = Join-Path $StageDir "tools\$t.exe"
+  $tn = if (Test-Path -LiteralPath $tp) { [Diagnostics.FileVersionInfo]::GetVersionInfo($tp).ProductName } else { '(missing)' }
+  Ok ($tn -eq 'ARBS-H') "D-CI-8 tools\$t.exe ProductName = ARBS-H ($tn)"
+}
 
 foreach ($x in @('scripts', 'drivers\sunshine', 'drivers\vhf-gamepad', 'config', 'README-portable.txt', 'start-portable.cmd')) {
   Ok (-not (Test-Path -LiteralPath (Join-Path $StageDir $x))) "stage excludes $x"

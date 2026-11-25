@@ -444,7 +444,7 @@ Invoke-Case 'post-install-first' {
   Eq $script:Result['start'] 'auto-started' 'first install: started'
   Eq $script:Result['credentials-acl'] 'ok' 'first install: migrated credentials already private'
   Eq $S.Services.ARBSHService.Start 2 'ARBSHService auto'; Eq $S.Services.ARBSHService.State 'RUNNING' 'ARBSHService running'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.3' 'version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.0' 'version file'
   Ok (-not ((Mutations) -match '^sc\.exe (delete|start) ApolloService|delete rule name="Vibepollo|VibepolloDisplayRestore|^pnputil\.exe /(delete|remove)')) 'Vibepollo service/rules/task/drivers never deleted'
 }
 
@@ -744,7 +744,7 @@ Invoke-Case 'h9-upgrade-from-0.1.1' {
   Eq (Invoke-Prepare) 0 'H9 upgrade prepare rc'
   Ok ($script:Result['prepare'] -match '^backup config-0\.1\.1-') 'H9 upgrade backup names the old version'
   Eq (Invoke-PostInstall) 0 'H9 upgrade post-install rc'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.3' 'H9 upgrade version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.0' 'H9 upgrade version file'
 }
 Invoke-Case 'h10-unreadable-path' {
   Initialize-FakeInstall
@@ -1161,7 +1161,7 @@ Invoke-Case 'p11-reason-one-line' {
 }
 
 # ---------------- H013: update, reinstall and uninstall of 0.1.3 (V1-V3; V4 is in l8 + T6) ----------------
-Invoke-Case 'v1-update-0.1.2-to-0.1.3' {
+Invoke-Case 'v1-update-0.1.2-to-0.2.0' {
   Initialize-FakeInstall
   [void]$S.Procs.Add((New-FakeProc 2201 'sunshine.exe' "$app\sunshine.exe"))
   Eq (Invoke-Prepare) 0 'V1 prepare rc'
@@ -1170,7 +1170,7 @@ Invoke-Case 'v1-update-0.1.2-to-0.1.3' {
   Ok ($script:Result['prepare'] -match '^backup config-0\.1\.2-') 'V1 backup names 0.1.2'
   $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
   Eq (Invoke-PostInstall) 0 'V1 post-install rc'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.1.3' 'V1 version file 0.1.3'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.0' 'V1 version file 0.2.0'
   Eq $script:Result['start'] 'auto-started' 'V1 auto-started'
   Ok (-not $script:Result.Contains('service-restore')) 'V1 no restore on success'
 }
@@ -1195,6 +1195,55 @@ Invoke-Case 'v3-uninstall-0.1.3-remove' {
     'schtasks.exe /Delete /TN "\ARBS-H-DisplayRestore" /F') 'V3 commands (no driver or Vibepollo command)'
   Eq $script:Result['config'] 'removed' 'V3 config removed'
   Eq $script:Result['drivers'] 'kept' 'V3 drivers kept'
+}
+
+# ---------------- UI1b: update 0.1.3 -> 0.2.0 keeps the configuration (ARBS WebUI default screen) ----------------
+# The default web screen is the server setting arbs_webui_default (arbs/classic/v2). The installer never writes it:
+# an existing sunshine.conf is kept byte for byte, a missing key means the server default (arbs).
+$script:ConfUi1b = "locale = ko`r`ngamepad = usbip_ds5`r`nupdate_check_interval = 86400`r`nnotify_pre_releases = false`r`n"
+Invoke-Case 'w1-update-0.1.3-to-0.2.0' {
+  Initialize-FakeInstall
+  [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.1.3')
+  $conf = Join-Path $app 'config\sunshine.conf'
+  [IO.File]::WriteAllText($conf, $script:ConfUi1b)
+  $before = (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash
+  [void]$S.Procs.Add((New-FakeProc 2401 'sunshine.exe' "$app\sunshine.exe"))
+  Eq (Invoke-Prepare) 0 'W1 prepare rc'
+  Ok ($script:Result['prepare'] -match '^backup config-0\.1\.3-') 'W1 backup names 0.1.3'
+  $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
+  Eq (Invoke-PostInstall) 0 'W1 post-install rc'
+  Eq $script:Result['config'] 'kept' 'W1 config kept'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.0' 'W1 version file 0.2.0'
+  Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before 'W1 sunshine.conf bytes unchanged'
+  Ok (-not ([IO.File]::ReadAllText($conf)).Contains('arbs_webui_default')) 'W1 no arbs_webui_default written (server default arbs)'
+  Eq $script:Result['start'] 'auto-started' 'W1 auto-started'
+}
+foreach ($w in @('classic', 'v2', 'arbs')) {
+  $global:W = $w
+  Invoke-Case "w2-keep-webui-default-$w" {
+    $w = $global:W
+    Initialize-FakeInstall
+    [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.1.3')
+    $conf = Join-Path $app 'config\sunshine.conf'
+    [IO.File]::WriteAllText($conf, $script:ConfUi1b + "arbs_webui_default = $w`r`n")
+    $before = (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash
+    Eq (Invoke-Prepare) 0 "W2 $w prepare rc"
+    $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
+    Eq (Invoke-PostInstall) 0 "W2 $w post-install rc"
+    Eq $script:Result['config'] 'kept' "W2 $w config kept"
+    Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before "W2 $w sunshine.conf bytes unchanged"
+    Ok (@([IO.File]::ReadAllLines($conf) | Where-Object { $_ -ceq "arbs_webui_default = $w" }).Count -eq 1) "W2 $w arbs_webui_default kept"
+  }
+}
+Invoke-Case 'w3-new-install-template-no-webui-key' {
+  $tpl = Join-Path (Split-Path -Parent $TestDir) 'sunshine.conf'
+  New-Item -ItemType Directory -Path (Join-Path $app 'config-template') -Force | Out-Null
+  Copy-Item -LiteralPath $tpl -Destination (Join-Path $app 'config-template\sunshine.conf')
+  Eq (Invoke-EnsureConfig) 0 'W3 ensure-config rc'
+  Eq $script:Result['config'] 'new-from-template' 'W3 config from template'
+  $text = [IO.File]::ReadAllText((Join-Path $app 'config\sunshine.conf'))
+  Ok (-not $text.Contains('arbs_webui_default')) 'W3 template has no arbs_webui_default (server default arbs)'
+  Eq (Get-FileHash -LiteralPath (Join-Path $app 'config\sunshine.conf') -Algorithm SHA256).Hash (Get-FileHash -LiteralPath $tpl -Algorithm SHA256).Hash 'W3 config = template bytes'
 }
 
 # ---------------- T5 rollback ----------------

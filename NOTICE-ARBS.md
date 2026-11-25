@@ -32,6 +32,12 @@ ARBS changes are the commits after the base commit (`git log c286d0862..HEAD`). 
   `.github/workflows/ci-windows.yml`, `docs/configuration.md`
 - `tests/CMakeLists.txt`, `tests/unit/test_arbs_haptics_timing.cpp`, `tests/unit/test_arbs_trigger_status.cpp` (new),
   `tests/unit/platform/windows/test_dualsense_usbip_gamepad.cpp`, `tests/integration/test_windows_portable_packaging.py`
+- ARBS WebUI (0.2.0): `src_assets/common/assets/web-arbs/` (new; parts of `api/client.ts`, `utils/repo.ts`, `utils/updates.ts`,
+  `utils/changelog.ts`, `services/covers.ts` are copied from the Vibepollo v2 web UI, marked in each file),
+  `src/arbs_webui_route.h`, `src/arbs_config_patch.h` (new), `src/confighttp.cpp`, `cmake/targets/web.cmake`,
+  `cmake/packaging/common.cmake`, `cmake/compile_definitions/windows.cmake`, `src_assets/common/assets/web-legacy/App.vue`,
+  `src_assets/common/assets/web/components/layout/AppShell.vue`, `src_assets/common/assets/web/e2e/ui.spec.ts`,
+  `tests/unit/test_arbs_webui_route.cpp`, `tests/unit/test_arbs_config_patch.cpp` (new)
 - Publication files: `README.md` (new), `README.upstream.md` (original README), `NOTICE-ARBS.md`, `.gitignore` (ARBS block)
 
 Outside this repository, the ARBS-H build applies a patch to the ENet copy inside the `moonlight-common-c` submodule

@@ -21,9 +21,9 @@
    (a) nvngx_truehdr.dll (proprietary NVIDIA RTX Video SDK runtime): decided - excluded from signing,
        kept in the package. It is NOT listed below and must never be added. The signing application
        names it as a third-party binary.
-   (b) Product name: the ProductName of exe files built by ARBS-H is set to "ARBS-H" (version info
-       only) in the next ARBS-H release (0.1.4). Until then the tool exe ProductName values are the
-       tool names (e.g. sunshinesvc, audio-info); sunshine.exe UNVERIFIED.
+   (b) Product name: the ProductName of exe files built by ARBS-H is "ARBS-H" (version info only)
+       from ARBS-H 0.2.0 on: sunshine.exe and the seven tool exe files (checked by the static installer
+       test). Before 0.2.0 the tool exe ProductName values were the tool names (e.g. sunshinesvc).
    (c) The Inno Setup uninstaller (unins000.exe) is generated inside setup.exe and is not signed by
        this two-request flow: accepted (not blocking).
 -->
