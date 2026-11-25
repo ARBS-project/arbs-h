@@ -206,6 +206,12 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+      <!-- ARBS-H UI1b: switch to the ARBS WebUI (server page). Fixed product label. -->
+      <a class="sidebar__arbs" href="/arbs/" title="ARBS WEBUI" data-arbs-webui>
+        <span class="sidebar__arbs-mark" aria-hidden="true">A</span>
+        <span class="sidebar__label">ARBS WEBUI</span>
+      </a>
+
       <nav class="sidebar__navigation">
         <div v-for="group in navigationGroups" :key="group.labelKey" class="nav-group">
           <p class="nav-group__label sidebar__label">{{ t(group.labelKey) }}</p>
@@ -260,7 +266,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        <a class="sidebar__legacy" href="/" :title="t('ui.shell.classic_interface')">
+        <a class="sidebar__legacy" href="/?ui=classic" :title="t('ui.shell.classic_interface')">
           <UiIcon name="external-link" :size="16" />
           <span class="sidebar__label">{{ t('ui.shell.classic_interface') }}</span>
         </a>
@@ -301,3 +307,36 @@ onBeforeUnmount(() => {
     </main>
   </div>
 </template>
+
+<style scoped>
+/* ARBS-H UI1b: ARBS WebUI switch link. #c2410c with white text = 5.18:1 (WCAG AA). */
+.sidebar__arbs {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: var(--vs-space-12);
+  margin: 0 var(--vs-space-12) var(--vs-space-12);
+  padding: var(--vs-space-8) var(--vs-space-12);
+  border-radius: var(--vs-radius-control);
+  background: #c2410c;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+.sidebar__arbs:hover,
+.sidebar__arbs:focus-visible {
+  background: #9a3412;
+  color: #ffffff;
+}
+.sidebar__arbs-mark {
+  display: inline-flex;
+  width: 18px;
+  justify-content: center;
+}
+.app-shell--collapsed .sidebar__arbs {
+  justify-content: center;
+  padding-inline: 0;
+}
+</style>

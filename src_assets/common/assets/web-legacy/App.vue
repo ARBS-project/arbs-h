@@ -17,6 +17,14 @@
                   </h1>
                 </div>
                 <nav class="hidden xl:flex items-center gap-0.5 text-xs font-medium ml-2">
+                  <!-- ARBS-H UI1b: switch to the ARBS WebUI (server page, not a SPA route). -->
+                  <a
+                    href="/arbs/"
+                    class="arbs-webui-link inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-semibold"
+                    data-arbs-webui
+                  >
+                    <span>ARBS WEBUI</span>
+                  </a>
                   <RouterLink to="/" :class="linkClass('/')">
                     <i class="fas fa-gauge" /><span>{{ $t('navbar.home') }}</span>
                   </RouterLink>
@@ -237,6 +245,8 @@ const { t } = useI18n();
 const mobileMenuOptions = computed(() => {
   const icon = (cls: string) => () => h('i', { class: cls });
   return [
+    // ARBS-H UI1b: fixed product label, opens the ARBS WebUI through the server.
+    { label: 'ARBS WEBUI', key: '__arbs', icon: icon('fas fa-gamepad') },
     { label: t('navbar.home'), key: '/', icon: icon('fas fa-gauge') },
     {
       label: t('navbar.applications'),
@@ -256,6 +266,10 @@ const mobileMenuOptions = computed(() => {
 function onMobileSelect(key: string | number): void {
   if (key === '__logout') {
     void logout();
+    return;
+  }
+  if (key === '__arbs') {
+    window.location.assign('/arbs/');
     return;
   }
   if (typeof key === 'string') router.push(key);
@@ -286,5 +300,17 @@ function containerClass(r: any) {
 .nav-link > .fal,
 .nav-link > .fab {
   margin: 0 !important;
+}
+
+/* ARBS-H UI1b: ARBS WebUI switch button (#c2410c with white text = 5.18:1, WCAG AA). */
+.arbs-webui-link {
+  background: #c2410c;
+  color: #ffffff;
+  margin-right: 0.25rem;
+}
+.arbs-webui-link:hover,
+.arbs-webui-link:focus-visible {
+  background: #9a3412;
+  color: #ffffff;
 }
 </style>

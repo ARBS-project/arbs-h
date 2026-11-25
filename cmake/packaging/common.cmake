@@ -22,12 +22,13 @@ set(CPACK_STRIP_FILES YES)
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}"
         PATTERN "web" EXCLUDE
-        PATTERN "web-legacy" EXCLUDE)
+        PATTERN "web-legacy" EXCLUDE
+        PATTERN "web-arbs" EXCLUDE)  # ARBS-H UI1b: ARBS WebUI sources (and their node_modules)
 
 # copy assets to build directory, for running without install
 file(GLOB_RECURSE ALL_ASSETS
         RELATIVE "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/" "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/*")
-list(FILTER ALL_ASSETS EXCLUDE REGEX "^web(-legacy)?/.*$")  # Filter out browser source directories
+list(FILTER ALL_ASSETS EXCLUDE REGEX "^web(-legacy|-arbs)?/.*$")  # Filter out browser source directories (ARBS-H UI1b: + web-arbs)
 foreach(asset ${ALL_ASSETS})  # Copy assets to build directory, excluding browser source directories
     # Keep subdirectories such as remote-session/, where the host looks for them.
     get_filename_component(asset_dir "${asset}" DIRECTORY)
@@ -44,6 +45,9 @@ install(CODE "
     endif()
     if(NOT EXISTS \"${CMAKE_CURRENT_BINARY_DIR}/assets/web/v2/index.html\")
         message(FATAL_ERROR \"Vibepollo v2 Web UI is missing. Build the web_ui target before packaging.\")
+    endif()
+    if(NOT EXISTS \"${CMAKE_CURRENT_BINARY_DIR}/assets/web/arbs/index.html\")
+        message(FATAL_ERROR \"ARBS WebUI is missing. Build the web_ui target before packaging.\")
     endif()
 " COMPONENT assets)
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/assets/web/"

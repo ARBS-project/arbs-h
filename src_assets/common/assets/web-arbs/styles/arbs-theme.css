@@ -1,0 +1,65 @@
+/* ARBS-H UI1b: colour set (docs/analysis/UI1b.md §4). Primary = STACKON orange #c2410c.
+ * WCAG AA ratios (relative luminance):
+ *   light  #c2410c on #ffffff 5.18 | #ffffff on #c2410c 5.18 | #c2410c on #fafaf9 4.96 | #c2410c on #fff7ed 4.88
+ *          #ffffff on #9a3412 7.31 | #1c1917 on #ffffff 17.49 | #57534e on #ffffff 7.63 | #b91c1c on #ffffff 6.47
+ *   dark   #f97316 on #0c0a09 7.05 | #f97316 on #1c1917 6.24 | #f97316 on #292524 5.41
+ *          buttons use dark text: #1c1917 on #f97316 6.24, hover #1c1917 on #fb923c 7.73
+ *          #fafaf9 on #1c1917 16.74 | #a8a29e on #1c1917 6.93 | #fca5a5 on #1c1917 9.21
+ * Not used (fail): #f97316 text in light mode (2.80), white text on #f97316 (2.80),
+ *   #c2410c text in dark mode (3.38), #78716c as text in dark mode (3.65, border only).
+ * File name must not contain "tokens" (installer static check S11).
+ */
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+  --arbs-bg: #ffffff;
+  --arbs-surface: #fafaf9;
+  --arbs-surface-2: #f5f5f4;
+  --arbs-text: #1c1917;
+  --arbs-muted: #57534e;
+  --arbs-primary: #c2410c;
+  --arbs-primary-bg: #c2410c;
+  --arbs-on-primary: #ffffff;
+  --arbs-primary-hover: #9a3412;
+  --arbs-primary-tint: #fff7ed;
+  --arbs-tint-bar: #c2410c;
+  --arbs-border: #e7e5e4;
+  --arbs-border-input: #78716c;
+  --arbs-danger: #b91c1c;
+  --arbs-danger-bg: #b91c1c;
+  --arbs-on-danger: #ffffff;
+  --arbs-ok: #15803d;
+  --arbs-warn-bg: #fff7ed;
+  --arbs-warn-border: #c2410c;
+  --arbs-error-bg: #fef2f2;
+  --arbs-ok-bg: #f0fdf4;
+  --arbs-shadow: 0 1px 2px rgb(28 25 23 / 8%), 0 4px 12px rgb(28 25 23 / 6%);
+  --arbs-overlay: rgb(12 10 9 / 55%);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --arbs-bg: #0c0a09;
+  --arbs-surface: #1c1917;
+  --arbs-surface-2: #292524;
+  --arbs-text: #fafaf9;
+  --arbs-muted: #a8a29e;
+  --arbs-primary: #f97316;
+  --arbs-primary-bg: #f97316;
+  --arbs-on-primary: #1c1917;
+  --arbs-primary-hover: #fb923c;
+  --arbs-primary-tint: #292524;
+  --arbs-tint-bar: #f97316;
+  --arbs-border: #44403c;
+  --arbs-border-input: #78716c;
+  --arbs-danger: #fca5a5;
+  --arbs-danger-bg: #fca5a5;
+  --arbs-on-danger: #1c1917;
+  --arbs-ok: #86efac;
+  --arbs-warn-bg: #292524;
+  --arbs-warn-border: #f97316;
+  --arbs-error-bg: #292524;
+  --arbs-ok-bg: #292524;
+  --arbs-shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  --arbs-overlay: rgb(0 0 0 / 70%);
+}

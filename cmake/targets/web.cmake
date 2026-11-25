@@ -1,8 +1,11 @@
 set(SUNSHINE_WEB_SOURCE_DIR "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web")
 set(SUNSHINE_LEGACY_WEB_SOURCE_DIR "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web-legacy")
+# ARBS-H UI1b: ARBS WebUI (/arbs/), built after the legacy UI because that build empties the root.
+set(SUNSHINE_ARBS_WEB_SOURCE_DIR "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web-arbs")
 set(SUNSHINE_WEB_ROOT_OUTPUT_DIR "${CMAKE_BINARY_DIR}/assets/web")
 set(SUNSHINE_WEB_OUTPUT_DIR "${SUNSHINE_WEB_ROOT_OUTPUT_DIR}/v2")
 set(SUNSHINE_LEGACY_WEB_OUTPUT_DIR "${SUNSHINE_WEB_ROOT_OUTPUT_DIR}")
+set(SUNSHINE_ARBS_WEB_OUTPUT_DIR "${SUNSHINE_WEB_ROOT_OUTPUT_DIR}/arbs")
 set(SUNSHINE_WEB_STAMP "${SUNSHINE_WEB_ROOT_OUTPUT_DIR}/.build-stamp")
 
 set(SUNSHINE_WEB_SOURCES)
@@ -14,7 +17,8 @@ set(SUNSHINE_WEB_SOURCES)
 # normal configure picks up newly added files.
 foreach(SUNSHINE_WEB_APPLICATION_SOURCE_DIR IN ITEMS
         "${SUNSHINE_WEB_SOURCE_DIR}"
-        "${SUNSHINE_LEGACY_WEB_SOURCE_DIR}")
+        "${SUNSHINE_LEGACY_WEB_SOURCE_DIR}"
+        "${SUNSHINE_ARBS_WEB_SOURCE_DIR}")
     file(GLOB SUNSHINE_WEB_APPLICATION_ROOT_SOURCES
         LIST_DIRECTORIES TRUE
         "${SUNSHINE_WEB_APPLICATION_SOURCE_DIR}/*")
@@ -35,7 +39,7 @@ list(REMOVE_DUPLICATES SUNSHINE_WEB_SOURCES)
 
 find_program(SUNSHINE_NPM_EXECUTABLE NAMES npm.cmd npm)
 
-# web_ui depends on both entrypoints so deleting either rebuilds the bundle.
+# web_ui depends on every entrypoint (v1, v2, ARBS WebUI) so deleting any rebuilds the bundle.
 # Makefile generators need a build rule for each dependency, not BYPRODUCTS.
 if(SUNSHINE_NPM_EXECUTABLE)
     add_custom_command(
@@ -43,6 +47,7 @@ if(SUNSHINE_NPM_EXECUTABLE)
             "${SUNSHINE_WEB_STAMP}"
             "${SUNSHINE_LEGACY_WEB_OUTPUT_DIR}/index.html"
             "${SUNSHINE_WEB_OUTPUT_DIR}/index.html"
+            "${SUNSHINE_ARBS_WEB_OUTPUT_DIR}/index.html"
         COMMAND "${CMAKE_COMMAND}" -E chdir "${SUNSHINE_LEGACY_WEB_SOURCE_DIR}"
                 "${SUNSHINE_NPM_EXECUTABLE}" ci --ignore-scripts --no-audit --no-fund --prefer-offline
         COMMAND "${CMAKE_COMMAND}" -E chdir "${SUNSHINE_LEGACY_WEB_SOURCE_DIR}"
@@ -53,6 +58,13 @@ if(SUNSHINE_NPM_EXECUTABLE)
         COMMAND "${CMAKE_COMMAND}" -E env
                 "SUNSHINE_WEB_OUTPUT_DIR=${SUNSHINE_WEB_OUTPUT_DIR}"
                 "${SUNSHINE_NPM_EXECUTABLE}" run build
+        # ARBS-H UI1b: ARBS WebUI last (after v1, which empties assets/web).
+        COMMAND "${CMAKE_COMMAND}" -E chdir "${SUNSHINE_ARBS_WEB_SOURCE_DIR}"
+                "${SUNSHINE_NPM_EXECUTABLE}" ci --ignore-scripts --no-audit --no-fund --prefer-offline
+        COMMAND "${CMAKE_COMMAND}" -E chdir "${SUNSHINE_ARBS_WEB_SOURCE_DIR}"
+                "${CMAKE_COMMAND}" -E env
+                "SUNSHINE_ARBS_WEB_OUTPUT_DIR=${SUNSHINE_ARBS_WEB_OUTPUT_DIR}"
+                "${SUNSHINE_NPM_EXECUTABLE}" run build
         COMMAND "${CMAKE_COMMAND}" -E touch "${SUNSHINE_WEB_STAMP}"
         WORKING_DIRECTORY "${SUNSHINE_WEB_SOURCE_DIR}"
         DEPENDS ${SUNSHINE_WEB_SOURCES}
@@ -62,7 +74,8 @@ if(SUNSHINE_NPM_EXECUTABLE)
     add_custom_target(web_ui DEPENDS
         "${SUNSHINE_WEB_STAMP}"
         "${SUNSHINE_LEGACY_WEB_OUTPUT_DIR}/index.html"
-        "${SUNSHINE_WEB_OUTPUT_DIR}/index.html")
+        "${SUNSHINE_WEB_OUTPUT_DIR}/index.html"
+        "${SUNSHINE_ARBS_WEB_OUTPUT_DIR}/index.html")
 else()
     add_custom_target(web_ui
         COMMAND "${CMAKE_COMMAND}" -E echo "npm is required to build the Vibepollo browser interface"
