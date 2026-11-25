@@ -2441,6 +2441,9 @@ namespace config {
            "realtime_stats_show_host_stats",
            "realtime_stats_show_host_charts",
            "realtime_stats_show_session_history",
+           // ARBS-H UI1b: default browser interface (arbs/classic/v2); confighttp getWebUi
+           // reads it from the file per request (src/arbs_webui_route.h).
+           "arbs_webui_default",
          }) {
       vars.erase(ui_only_key);
     }

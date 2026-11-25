@@ -46,7 +46,9 @@
   #include <Windows.h>
 #endif
 // local includes
+#include "arbs_config_patch.h"
 #include "arbs_startup_errors.h"
+#include "arbs_webui_route.h"
 #include "config.h"
 #include "config_http_log_policy.h"
 #include "config_http_login_limiter.h"
@@ -535,6 +537,11 @@ namespace confighttp {
 
         if (key == "session_history_ttl_days" ||
             key == "session_history_db_size_limit_mb") {
+          continue;
+        }
+
+        // ARBS-H UI1b: only picks the page `/` opens; getWebUi reads it from the file per request.
+        if (key == arbs::webui_route::setting_key) {
           continue;
         }
 
@@ -1591,6 +1598,34 @@ namespace confighttp {
       const bool cache_immutable = extension == "css" || extension == "js" || extension == "woff2";
       response->write(success_ok, input, web_headers(mime_type->second, cache_immutable));
     }
+
+    /// ARBS-H UI1b: 302 for the default-interface choice. no-store so a later change of
+    /// `arbs_webui_default` is not hidden by a browser-cached redirect. No address is logged.
+    void send_web_ui_redirect(resp_https_t response, std::string_view location) {
+      const SimpleWeb::CaseInsensitiveMultimap headers {
+        {"Location", std::string {location}},
+        {"Cache-Control", "no-store"},
+        {"X-Frame-Options", "DENY"},
+        {"Content-Security-Policy", "frame-ancestors 'none';"}
+      };
+      response->write(redirection_found, headers);
+    }
+
+    /// Raw `arbs_webui_default` value from the config file, read per request (UI1b P5).
+    std::optional<std::string> read_webui_default_setting() {
+      auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
+      const auto it = vars.find(std::string {arbs::webui_route::setting_key});
+      if (it == vars.end()) {
+        return std::nullopt;
+      }
+      return it->second;
+    }
+
+    bool arbs_web_ui_shell_exists() {
+      std::error_code error;
+      const bool exists = fs::is_regular_file(fs::path {WEB_DIR} / fs::path {arbs::webui_route::arbs_shell}, error);
+      return exists && !error;
+    }
   }  // namespace
 
   /**
@@ -1612,31 +1647,32 @@ namespace confighttp {
   void getWebUi(resp_https_t response, req_https_t request) {
     print_req(request);
 
-    const std::string &path = request->path;
-    const std::string_view path_view {path};
-    static constexpr std::array reserved_prefixes {"/api"sv, "/assets"sv, "/covers"sv, "/images"sv};
-    if (std::ranges::any_of(reserved_prefixes, [&path](std::string_view prefix) {
-          return std::string_view {path}.starts_with(prefix);
-        })) {
-      not_found(response, request);
-      return;
+    // ARBS-H UI1b: the shell choice (v1 / v2 / ARBS WebUI, default-interface redirect for `/`)
+    // lives in arbs_webui_route.h; reserved prefixes, static-path 404s and extension 404s as before.
+    std::optional<std::string> ui_query;
+    if (request->path == "/") {
+      const auto query = request->parse_query_string();
+      if (const auto ui = query.find("ui"); ui != query.end()) {
+        ui_query = ui->second;
+      }
+    }
+    std::optional<std::string_view> ui_query_view;
+    if (ui_query) {
+      ui_query_view = std::string_view {*ui_query};
     }
 
-    const bool is_v2_route = path_view == "/v2" || path_view.starts_with("/v2/");
-    const bool is_v2_static_path = path_view == "/v2/assets" || path_view.starts_with("/v2/assets/") ||
-                                   path_view == "/v2/images" || path_view.starts_with("/v2/images/");
-    if (is_v2_static_path) {
-      not_found(response, request);
-      return;
+    const auto decision = arbs::webui_route::decide(request->path, ui_query_view, read_webui_default_setting, arbs_web_ui_shell_exists);
+    switch (decision.action) {
+      case arbs::webui_route::action_e::not_found:
+        not_found(response, request);
+        return;
+      case arbs::webui_route::action_e::redirect:
+        send_web_ui_redirect(std::move(response), decision.target);
+        return;
+      case arbs::webui_route::action_e::serve:
+        serve_web_file(std::move(response), std::move(request), decision.target);
+        return;
     }
-
-    // Missing files should remain 404s. Extension-free paths are client-side
-    // navigation routes and receive the single application shell.
-    if (fs::path {path}.has_extension()) {
-      not_found(response, request);
-      return;
-    }
-    serve_web_file(std::move(response), std::move(request), is_v2_route ? "v2/index.html" : "index.html");
   }
 
   /**
@@ -3642,34 +3678,11 @@ namespace confighttp {
       // Track which keys are being modified to detect restart requirements
       std::set<std::string> changed_keys;
 
-      for (auto it = patch_tree.begin(); it != patch_tree.end(); ++it) {
-        const std::string key = it.key();
-        const nlohmann::json &val = it.value();
-        changed_keys.insert(key);
-
-        // Remove key when explicitly null or empty string
-        if (val.is_null() || (val.is_string() && val.get<std::string>().empty())) {
-          auto curIt = current.find(key);
-          if (curIt != current.end()) {
-            current.erase(curIt);
-          }
-          continue;
-        }
-
-        // Persist value: strings are raw, non-strings are dumped as JSON
-        if (val.is_string()) {
-          current[key] = val.get<std::string>();
-        } else {
-          current[key] = val.dump();
-        }
-      }
+      // ARBS-H UI1b: merge loop moved unchanged to arbs_config_patch.h (unit-tested there).
+      arbs::config_patch::merge(current, patch_tree, changed_keys);
 
       // Write back full merged config file
-      std::stringstream config_stream;
-      for (const auto &kv : current) {
-        config_stream << kv.first << " = " << kv.second << std::endl;
-      }
-      file_handler::write_file(config::sunshine.config_file.c_str(), config_stream.str());
+      file_handler::write_file(config::sunshine.config_file.c_str(), arbs::config_patch::serialize(current));
 
 #ifdef _WIN32
       reconcile_vulkan_hdr_layer_from_body(patch_tree);
@@ -6406,6 +6419,7 @@ namespace confighttp {
     // passes through the existing authentication and CSRF gates.
     server.resource["^/(assets|images)/.+$"]["GET"] = getWebAsset;
     server.resource["^/v2/(assets|images)/.+$"]["GET"] = getWebAsset;
+    server.resource["^/arbs/(assets|images)/.+$"]["GET"] = getWebAsset;  // ARBS-H UI1b ARBS WebUI
     server.resource["^/v2/[^/]+\\.webmanifest$"]["GET"] = getWebAsset;
     server.default_resource["GET"] = getWebUi;
     thread_pool_util::ThreadPool blocking_route_pool;

@@ -316,6 +316,50 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### arbs_webui_default
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            ARBS-H. Chooses the browser interface that opens at the root address <code>/</code> of the web UI.
+            <code>arbs</code> redirects <code>/</code> to the ARBS WebUI at <code>/arbs/</code>,
+            <code>classic</code> keeps the original interface at <code>/</code>, and <code>v2</code> redirects to
+            <code>/v2/</code>. A missing line, an empty value or any other value means <code>arbs</code>; when the
+            ARBS WebUI files are not installed, <code>/</code> shows the original interface instead.
+            The address <code>/?ui=classic</code> always opens the original interface, whatever this setting says.
+            The value is read from the config file on every request for <code>/</code>, so a change takes effect
+            on the next page load without a restart. The other interfaces stay reachable at <code>/arbs/</code>
+            and <code>/v2/</code>.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            arbs
+            @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="3">Choices</td>
+        <td>arbs</td>
+        <td>ARBS WebUI (<code>/arbs/</code>)</td>
+    </tr>
+    <tr>
+        <td>classic</td>
+        <td>original interface (<code>/</code>)</td>
+    </tr>
+    <tr>
+        <td>v2</td>
+        <td>v2 interface (<code>/v2/</code>)</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            arbs_webui_default = classic
+            @endcode</td>
+    </tr>
+</table>
+
 <!-- The update command mechanism was removed. Sunshine now only notifies about updates. -->
 
 ## Input

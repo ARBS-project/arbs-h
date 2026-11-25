@@ -132,7 +132,8 @@ function(sunshine_add_windows_versioninfo target_name)
         set(_versioninfo_file_description "${target_name}")
         set(_versioninfo_internal_name "${target_name}")
         set(_versioninfo_original_filename "${target_name}.exe")
-        set(_versioninfo_product_name "${target_name}")
+        # D-CI-8 (ARBS-H UI1b): every bundled tool reports the product as ARBS-H.
+        set(_versioninfo_product_name "${PROJECT_NAME}")
         configure_file(
             "${CMAKE_SOURCE_DIR}/src/platform/windows/tool_version.rc.in"
             "${_rc_file}"

@@ -2120,6 +2120,10 @@ endif()
 sunshine_register_component(NAME test_component_controller_speaker_pcm TEST_SOURCE unit/test_controller_speaker_pcm.cpp)
 # ARBS-H H1-0: header-only PCM haptics timing summary.
 sunshine_register_component(NAME test_component_arbs_haptics_timing TEST_SOURCE unit/test_arbs_haptics_timing.cpp)
+# ARBS-H UI1b: header-only web shell choice (`/` default-interface redirect) and the PATCH /api/config merge step.
+sunshine_register_component(NAME test_component_arbs_webui_route TEST_SOURCE unit/test_arbs_webui_route.cpp)
+sunshine_register_component(NAME test_component_arbs_config_patch TEST_SOURCE unit/test_arbs_config_patch.cpp
+    LINK_LIBRARIES nlohmann_json::nlohmann_json)
 # ARBS-H R1a-fix1 F5/F6: unreadable TLS certificate -> one message (paths, what(), code); constructor only, no listener.
 sunshine_register_component(NAME test_component_arbs_startup_errors TEST_SOURCE unit/test_arbs_startup_errors.cpp
     LINK_LIBRARIES sunshine_test_simple_web_headers ${SUNSHINE_TEST_SOCKET_LIBRARIES})
