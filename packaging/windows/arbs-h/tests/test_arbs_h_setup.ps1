@@ -444,7 +444,7 @@ Invoke-Case 'post-install-first' {
   Eq $script:Result['start'] 'auto-started' 'first install: started'
   Eq $script:Result['credentials-acl'] 'ok' 'first install: migrated credentials already private'
   Eq $S.Services.ARBSHService.Start 2 'ARBSHService auto'; Eq $S.Services.ARBSHService.State 'RUNNING' 'ARBSHService running'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.1' 'version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'version file'
   Ok (-not ((Mutations) -match '^sc\.exe (delete|start) ApolloService|delete rule name="Vibepollo|VibepolloDisplayRestore|^pnputil\.exe /(delete|remove)')) 'Vibepollo service/rules/task/drivers never deleted'
 }
 
@@ -744,7 +744,7 @@ Invoke-Case 'h9-upgrade-from-0.1.1' {
   Eq (Invoke-Prepare) 0 'H9 upgrade prepare rc'
   Ok ($script:Result['prepare'] -match '^backup config-0\.1\.1-') 'H9 upgrade backup names the old version'
   Eq (Invoke-PostInstall) 0 'H9 upgrade post-install rc'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.1' 'H9 upgrade version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'H9 upgrade version file'
 }
 Invoke-Case 'h10-unreadable-path' {
   Initialize-FakeInstall
@@ -1161,7 +1161,7 @@ Invoke-Case 'p11-reason-one-line' {
 }
 
 # ---------------- H013: update, reinstall and uninstall of 0.1.3 (V1-V3; V4 is in l8 + T6) ----------------
-Invoke-Case 'v1-update-0.1.2-to-0.2.1' {
+Invoke-Case 'v1-update-0.1.2-to-0.2.2' {
   Initialize-FakeInstall
   [void]$S.Procs.Add((New-FakeProc 2201 'sunshine.exe' "$app\sunshine.exe"))
   Eq (Invoke-Prepare) 0 'V1 prepare rc'
@@ -1170,7 +1170,7 @@ Invoke-Case 'v1-update-0.1.2-to-0.2.1' {
   Ok ($script:Result['prepare'] -match '^backup config-0\.1\.2-') 'V1 backup names 0.1.2'
   $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
   Eq (Invoke-PostInstall) 0 'V1 post-install rc'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.1' 'V1 version file 0.2.1'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'V1 version file 0.2.2'
   Eq $script:Result['start'] 'auto-started' 'V1 auto-started'
   Ok (-not $script:Result.Contains('service-restore')) 'V1 no restore on success'
 }
@@ -1201,7 +1201,7 @@ Invoke-Case 'v3-uninstall-0.1.3-remove' {
 # The default web screen is the server setting arbs_webui_default (arbs/classic/v2). The installer never writes it:
 # an existing sunshine.conf is kept byte for byte, a missing key means the server default (arbs).
 $script:ConfUi1b = "locale = ko`r`ngamepad = usbip_ds5`r`nupdate_check_interval = 86400`r`nnotify_pre_releases = false`r`n"
-Invoke-Case 'w1-update-0.1.3-to-0.2.1' {
+Invoke-Case 'w1-update-0.1.3-to-0.2.2' {
   Initialize-FakeInstall
   [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.1.3')
   $conf = Join-Path $app 'config\sunshine.conf'
@@ -1213,7 +1213,7 @@ Invoke-Case 'w1-update-0.1.3-to-0.2.1' {
   $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
   Eq (Invoke-PostInstall) 0 'W1 post-install rc'
   Eq $script:Result['config'] 'kept' 'W1 config kept'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.1' 'W1 version file 0.2.1'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'W1 version file 0.2.2'
   Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before 'W1 sunshine.conf bytes unchanged'
   Ok (-not ([IO.File]::ReadAllText($conf)).Contains('arbs_webui_default')) 'W1 no arbs_webui_default written (server default arbs)'
   Eq $script:Result['start'] 'auto-started' 'W1 auto-started'
@@ -1249,7 +1249,7 @@ Invoke-Case 'w3-new-install-template-no-webui-key' {
 # ---------------- H021: update 0.2.0 -> 0.2.1 (web assets and version only) keeps the configuration ----------------
 # The ARBS WebUI 0.2.1 hides some gamepad types and the "enabled" trigger status in its lists, but values that are
 # already set stay as they are: the installer keeps sunshine.conf byte for byte and writes no key.
-Invoke-Case 'w4-update-0.2.0-to-0.2.1' {
+Invoke-Case 'w4-update-0.2.0-to-0.2.2' {
   Initialize-FakeInstall
   [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.2.0')
   $conf = Join-Path $app 'config\sunshine.conf'
@@ -1262,9 +1262,42 @@ Invoke-Case 'w4-update-0.2.0-to-0.2.1' {
   $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
   Eq (Invoke-PostInstall) 0 'W4 post-install rc'
   Eq $script:Result['config'] 'kept' 'W4 config kept'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.1' 'W4 version file 0.2.1'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'W4 version file 0.2.2'
   Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before 'W4 sunshine.conf bytes unchanged (hidden values kept)'
   Eq $script:Result['start'] 'auto-started' 'W4 auto-started'
+}
+
+# ---------------- H022: update 0.2.1 -> 0.2.2 (history days default 30 on the server) keeps the configuration ----------------
+# The server default of session_history_ttl_days becomes 30. The installer writes no key: a value already in
+# sunshine.conf (here 0 = never delete) stays as is, a missing key means the server default 30.
+$script:ConfH022 = "locale = ko`r`ngamepad = usbip_ds5`r`narbs_trigger_status = h2b`r`nsession_history_enabled = enabled`r`n"
+foreach ($c in @(
+    @{ N = 'ttl-set'; Extra = "session_history_ttl_days = 0`r`n"; Pid = 2601 },
+    @{ N = 'ttl-missing'; Extra = ''; Pid = 2602 })) {
+  $global:W5 = $c
+  Invoke-Case "w5-update-0.2.1-to-0.2.2-$($c.N)" {
+    $c = $global:W5
+    Initialize-FakeInstall
+    [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.2.1')
+    $conf = Join-Path $app 'config\sunshine.conf'
+    [IO.File]::WriteAllText($conf, $script:ConfH022 + $c.Extra)
+    $before = (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash
+    [void]$S.Procs.Add((New-FakeProc $c.Pid 'sunshine.exe' "$app\sunshine.exe"))
+    Eq (Invoke-Prepare) 0 "W5 $($c.N) prepare rc"
+    Ok ($script:Result['prepare'] -match '^backup config-0\.2\.1-') "W5 $($c.N) backup names 0.2.1"
+    $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
+    Eq (Invoke-PostInstall) 0 "W5 $($c.N) post-install rc"
+    Eq $script:Result['config'] 'kept' "W5 $($c.N) config kept"
+    Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' "W5 $($c.N) version file 0.2.2"
+    Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before "W5 $($c.N) sunshine.conf bytes unchanged"
+    $ttl = @([IO.File]::ReadAllLines($conf) | Where-Object { $_ -match '^\s*session_history_ttl_days\s*=' })
+    if ($c.Extra) {
+      Ok ($ttl.Count -eq 1 -and $ttl[0] -ceq 'session_history_ttl_days = 0') "W5 $($c.N) existing value 0 kept (one line)"
+    } else {
+      Eq $ttl.Count 0 "W5 $($c.N) no session_history_ttl_days written (server default 30)"
+    }
+    Eq $script:Result['start'] 'auto-started' "W5 $($c.N) auto-started"
+  }
 }
 
 # ---------------- T5 rollback ----------------

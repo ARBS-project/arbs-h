@@ -11,9 +11,9 @@ param(
   [Parameter(Mandatory = $true)][string]$StageDir,
   [Parameter(Mandatory = $true)][string]$SetupExe,
   [string]$UninstallKeysFile = '',
-  [string]$Version = '0.2.1',
-  # H013 S11: commit the changes of this release start from (H021 0.2.1: v0.2.0 = 5472d513a; UI1b used v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
-  [string]$BaseCommit = '5472d513a4d9c4e0abcf9b3c33ff5be0eacd5526'
+  [string]$Version = '0.2.2',
+  # H013 S11: commit the changes of this release start from (H022 0.2.2: v0.2.1 = abcf16b44; H021 used v0.2.0 = 5472d513a; UI1b used v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
+  [string]$BaseCommit = 'abcf16b44b8312ed176c9b5871f0446579841098'
 )
 $ErrorActionPreference = 'Stop'
 $pkg = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -249,6 +249,21 @@ if ($git) {
   Ok ($bad.Count -eq 0) ("S11 commit range $($BaseCommit.Substring(0, 9))..HEAD + index: no third-party/, drivers/, tokens.* (" + $changed.Count + ' files)' + $(if ($bad.Count) { ': ' + ($bad -join ', ') } else { '' }))
 }
 else { Ok $false 'S11 git.exe not found' }
+# S12 (H022): session_history_ttl_days default 30 is the same in the server and in the three web screens;
+# the installer template does not write the key (an existing value in sunshine.conf is kept, missing = 30).
+$s12 = @(
+  @{ F = 'src\config.cpp'; P = '(?m)^\s*30,\s*// session_history_ttl_days' },
+  @{ F = 'src\config.h'; P = 'int session_history_ttl_days \{30\};' },
+  @{ F = 'src_assets\common\assets\web-arbs\logic\config.ts'; P = '(?m)^\s*session_history_ttl_days: 30,' },
+  @{ F = 'src_assets\common\assets\web\configs\settingsSchema.ts'; P = '(?m)^\s*session_history_ttl_days: 30,' },
+  @{ F = 'src_assets\common\assets\web-legacy\stores\config.ts'; P = '(?m)^\s*session_history_ttl_days: 30,' })
+foreach ($e in $s12) {
+  $t = [IO.File]::ReadAllText((Join-Path $srcRoot $e.F))
+  Ok ($t -match $e.P) "S12 $($e.F): session_history_ttl_days default 30"
+}
+Ok (-not ([IO.File]::ReadAllText((Join-Path $pkg 'sunshine.conf'))).Contains('session_history_ttl_days')) 'S12 installer template leaves session_history_ttl_days unset (server default 30)'
+$s12Help = [IO.File]::ReadAllText((Join-Path $srcRoot 'src_assets\common\assets\web-arbs\locales\ko.json'), [Text.Encoding]::UTF8)
+Ok ($s12Help.Contains('0 = ' + [char]0xC9C0 + [char]0xC6B0 + [char]0xC9C0 + ' ' + [char]0xC54A + [char]0xC74C + '. ' + [char]0xAE30 + [char]0xBCF8 + ' 30' + [char]0xC77C + '.')) 'S12 ko help text "0 = (never). (default) 30 (days)."'
 
 Ok (Test-Path -LiteralPath $SetupExe) 'setup.exe exists'
 $shaFile = "$SetupExe.sha256"
