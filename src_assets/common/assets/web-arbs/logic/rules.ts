@@ -3,6 +3,8 @@
 // Each function returns the i18n key of the reason, or null when the control is usable.
 // Pure functions, unit-tested in scripts/rules.test.ts.
 
+import { effectiveGamepad } from './config.ts';
+
 export type Reason = string | null;
 
 export const ARBS_GAMEPAD = 'usbip_ds5';
@@ -55,14 +57,37 @@ export function controllerOffReason(state: ControllerState): Reason {
   return state.controller ? null : 'reason.controller_off';
 }
 
-/** R7: gamepad is not usbip_ds5 -> trigger status, HD haptics gain, per-app HD haptics. */
-export function dualSenseReason(state: ControllerState): Reason {
-  return firstReason(controllerOffReason(state), state.gamepad === ARBS_GAMEPAD ? null : 'reason.need_usbip_ds5');
+/**
+ * H021 (EA-H021-R-03, plan A): gamepad types for which the server builds the usbip DualSense for
+ * an APEX (reported as a PlayStation pad) when usbip-win2 is installed, so arbs_trigger_status and
+ * the HD haptics gain apply (src/platform/windows/dualsense_usbip_gamepad_policy.h:24-26,
+ * vhf_gamepad_policy.cpp:70-119; docs/analysis/H021.md §1-1). Exact server names (lower case).
+ */
+export const DUALSENSE_GAMEPADS: readonly string[] = ['usbip_ds5', 'auto', 'vhf', 'vhf_ds5', 'vhf_steam'];
+
+export function makesDualSense(gamepad: string): boolean {
+  return DUALSENSE_GAMEPADS.includes(gamepad);
 }
 
-/** True when the warning next to the gamepad type must show (R7). */
-export function gamepadWarning(state: ControllerState): boolean {
-  return state.controller && state.gamepad !== ARBS_GAMEPAD;
+/**
+ * R7 (H021): trigger status and HD haptics gain only apply when the pad becomes a DualSense.
+ * The values themselves are never changed here, the controls are only disabled with the reason.
+ */
+export function dualSenseReason(state: ControllerState): Reason {
+  return firstReason(controllerOffReason(state), makesDualSense(effectiveGamepad(state.gamepad)) ? null : 'reason.need_dualsense');
+}
+
+/**
+ * Per-app "DualSense HD haptics" (H-APP-22) makes a DualSense for that app whatever the gamepad
+ * type is (policy.h:24 application_requested, process.cpp:2444-2450), so only R6 applies.
+ */
+export function appHapticsReason(state: ControllerState): Reason {
+  return controllerOffReason(state);
+}
+
+/** H021 stats: "keep session history" cannot change while a stream is active (the server defers it). */
+export function historyToggleReason(activeStream: boolean): Reason {
+  return activeStream ? 'reason.streaming_now' : null;
 }
 
 /** R8: nothing running -> force close, stop stream. */

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  appHapticsReason,
   appNameReason,
   appSelectReason,
   authReason,
@@ -12,8 +13,10 @@ import {
   disconnectReason,
   dualSenseReason,
   firstReason,
-  gamepadWarning,
+  DUALSENSE_GAMEPADS,
+  historyToggleReason,
   isWindows,
+  makesDualSense,
   offlineReason,
   pairReason,
   passwordReason,
@@ -49,16 +52,31 @@ test('R5 app must be chosen', () => {
   assert.equal(appSelectReason(true), null);
 });
 
-test('R6 gamepad input off; R7 gamepad must be usbip_ds5', () => {
+test('R6 gamepad input off; R7 (H021 plan A) trigger status and gain only where the pad becomes a DualSense', () => {
   assert.equal(controllerOffReason({ controller: false, gamepad: 'usbip_ds5' }), 'reason.controller_off');
   assert.equal(dualSenseReason({ controller: false, gamepad: 'usbip_ds5' }), 'reason.controller_off');
-  for (const gamepad of ['auto', 'x360', 'ds4', 'vhf_ds5', 'USBIP_DS5', '']) {
-    assert.equal(dualSenseReason({ controller: true, gamepad }), 'reason.need_usbip_ds5', gamepad);
-    assert.equal(gamepadWarning({ controller: true, gamepad }), true, gamepad);
+  // EA-H021-R-03: usbip DualSense is built for these (APEX = PlayStation pad + usbip-win2).
+  assert.deepEqual([...DUALSENSE_GAMEPADS], ['usbip_ds5', 'auto', 'vhf', 'vhf_ds5', 'vhf_steam']);
+  for (const gamepad of ['usbip_ds5', 'auto', 'vhf', 'vhf_ds5', 'vhf_steam']) {
+    assert.equal(makesDualSense(gamepad), true, gamepad);
+    assert.equal(dualSenseReason({ controller: true, gamepad }), null, gamepad);
   }
-  assert.equal(dualSenseReason({ controller: true, gamepad: 'usbip_ds5' }), null);
-  assert.equal(gamepadWarning({ controller: true, gamepad: 'usbip_ds5' }), false);
-  assert.equal(gamepadWarning({ controller: false, gamepad: 'x360' }), false);
+  for (const gamepad of ['x360', 'ds4', 'vhf_xbox', 'vhf_xbox_one', 'vhf_ds4', 'vhf_switch']) {
+    assert.equal(makesDualSense(gamepad), false, gamepad);
+    assert.equal(dualSenseReason({ controller: true, gamepad }), 'reason.need_dualsense', gamepad);
+  }
+  // A name the server does not know is ignored there (default auto stays), so it counts as auto.
+  assert.equal(dualSenseReason({ controller: true, gamepad: 'USBIP_DS5' }), null);
+  assert.equal(dualSenseReason({ controller: true, gamepad: 'bogus' }), null);
+});
+
+test('per-app HD haptics only needs gamepad input on (any type); history switch waits for the stream end', () => {
+  for (const gamepad of ['usbip_ds5', 'x360', 'ds4', 'vhf_xbox', 'auto']) {
+    assert.equal(appHapticsReason({ controller: true, gamepad }), null, gamepad);
+    assert.equal(appHapticsReason({ controller: false, gamepad }), 'reason.controller_off', gamepad);
+  }
+  assert.equal(historyToggleReason(true), 'reason.streaming_now');
+  assert.equal(historyToggleReason(false), null);
 });
 
 test('R8 nothing running', () => {

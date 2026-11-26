@@ -1,9 +1,10 @@
 // ARBS-H UI1b: tier-1 scope (docs/UI1_DECISIONS.md "1차 (77)") mapped to ARBS WebUI cards.
 // Source: docs/analysis/UI1b.md §2-3. Every ID here must appear as data-feature="<ID>" in the
 // card's view (or a shared component); scripts/features.test.ts checks this both ways.
-// Tier 2, advanced and excluded items are NOT part of this UI (they stay in the classic UI).
+// Tier 2, advanced and excluded items are NOT part of this UI (they stay in the classic UI),
+// except the ones promoted by a later decision (PROMOTED below, e.g. H021 statistics).
 
-export type CardId = 'S' | 'D' | 'C' | 'V' | 'A' | 'T' | 'U' | 'X';
+export type CardId = 'S' | 'D' | 'C' | 'V' | 'A' | 'T' | 'U' | 'X' | 'M';
 
 export interface FeatureEntry {
   id: string;
@@ -12,6 +13,8 @@ export interface FeatureEntry {
   files: string[];
   /** Short description of where it is on screen (Korean, for the evidence table). */
   place: string;
+  /** Set when the ID was moved into this UI later from another tier (decision record). */
+  promoted?: string;
 }
 
 export const CARD_LABELS: Record<CardId, string> = {
@@ -23,6 +26,7 @@ export const CARD_LABELS: Record<CardId, string> = {
   T: '문제 해결',
   U: '계정·화면 모양',
   X: '공통',
+  M: '통계',
 };
 
 const S = 'views/StatusView.vue';
@@ -35,6 +39,10 @@ const T = 'views/TroubleshootView.vue';
 const U = 'views/AccountView.vue';
 const SHELL = 'App.vue';
 const NAV = 'components/NavMenu.vue';
+const NAVDATA = 'logic/nav.ts';
+const M = 'views/StatsView.vue';
+/** H021 (EA-H021-R-02 / R-03): statistics moved from UI1 tier 2 (and 2 advanced items) to this UI. */
+const H021 = 'EA-H021-R-02';
 const TOP = 'components/TopBar.vue';
 const SAVE = 'components/SaveBar.vue';
 const LOGIN = 'components/LoginOverlay.vue';
@@ -42,11 +50,11 @@ const OFF = 'components/OfflineOverlay.vue';
 const FOOT = 'components/FooterNotice.vue';
 
 export const FEATURES: FeatureEntry[] = [
-  { id: 'H-NAV-01', card: 'S', files: [NAV], place: '메뉴 "상태" → /arbs/' },
-  { id: 'H-NAV-02', card: 'A', files: [NAV], place: '메뉴 "앱" → /arbs/apps' },
-  { id: 'H-NAV-03', card: 'D', files: [NAV], place: '메뉴 "기기 연결" → /arbs/devices' },
+  { id: 'H-NAV-01', card: 'S', files: [NAVDATA], place: '메뉴 "상태" → /arbs/' },
+  { id: 'H-NAV-02', card: 'A', files: [NAVDATA], place: '메뉴 "앱" → /arbs/apps' },
+  { id: 'H-NAV-03', card: 'D', files: [NAVDATA], place: '메뉴 "기기 연결" → /arbs/devices' },
   { id: 'H-NAV-06', card: 'X', files: [TOP], place: '상단 "전체 설정(기존 화면)" 링크 /settings' },
-  { id: 'H-NAV-07', card: 'T', files: [NAV], place: '메뉴 "문제 해결" → /arbs/troubleshoot' },
+  { id: 'H-NAV-07', card: 'T', files: [NAVDATA], place: '메뉴 "문제 해결" → /arbs/troubleshoot' },
   { id: 'H-NAV-08', card: 'U', files: [U], place: '계정 카드 "로그아웃" 버튼' },
   { id: 'H-NAV-10', card: 'X', files: [SAVE], place: '저장 막대 상태(저장 중·저장됨·지연·다시 시작 필요)' },
   { id: 'H-NAV-11', card: 'U', files: [U, TOP], place: '상단 고정 테마 버튼 + 계정 카드 화면 모양' },
@@ -69,7 +77,7 @@ export const FEATURES: FeatureEntry[] = [
   { id: 'H-CLI-03', card: 'D', files: [P], place: '새 기기 연결(PIN·이름)' },
   { id: 'H-CLI-06', card: 'D', files: [D], place: '기기 목록 연결됨/오프라인·끊기·편집·지우기' },
   { id: 'H-CLI-08', card: 'D', files: [D], place: '선택한 기기 "권한"' },
-  { id: 'H-STAT-05', card: 'S', files: [S], place: '활성 스트리밍 세션' },
+  { id: 'H-STAT-05', card: 'S', files: [S, M], place: '활성 스트리밍 세션(상태 카드) + 통계 "지금 스트리밍"' },
   { id: 'H-SET-002', card: 'V', files: [V], place: '"가상 디스플레이 모드" 선택' },
   { id: 'H-SET-003', card: 'V', files: [V], place: '"해상도 맞추기" 선택' },
   { id: 'H-SET-065', card: 'C', files: [C], place: '"게임패드 입력" 스위치' },
@@ -106,7 +114,7 @@ export const FEATURES: FeatureEntry[] = [
   { id: 'H-V2PAIR-01', card: 'D', files: [P], place: '기기 연결 화면·"기기 목록으로"' },
   { id: 'H-V2PAIR-03', card: 'D', files: [P], place: '이름·PIN(4자리, 앞 0 보정)·"승인"' },
   { id: 'H-V2PAIR-04', card: 'D', files: [P], place: '연결됨/실패·기기 보기·하나 더' },
-  { id: 'H-V2STAT-04', card: 'S', files: [S], place: '활성 세션 목록 + "스트림 중지"' },
+  { id: 'H-V2STAT-04', card: 'S', files: [S, M], place: '활성 세션 목록 + "스트림 중지"(상태 카드), 통계 "지금 스트리밍" 숫자' },
   { id: 'H-V2LOG-01', card: 'T', files: [T], place: '실시간 따라가기·멈춤·새로 고침' },
   { id: 'H-V2LOG-02', card: 'T', files: [T], place: '출처·심각도·검색·이전/다음 일치' },
   { id: 'H-V2LOG-03', card: 'T', files: [T], place: '요약(오류·경고·줄 수)·보이는 줄 복사·묶음 받기' },
@@ -119,7 +127,18 @@ export const FEATURES: FeatureEntry[] = [
   { id: 'H-V2MNT-08', card: 'T', files: [T], place: 'Windows와 함께 시작·서비스 시작 방식·"ARBS-H 다시 시작"' },
   { id: 'H-V2AUTH-01', card: 'U', files: [LOGIN], place: '로그인(H-AUTH-01과 하나)' },
   { id: 'H-V2AUTH-02', card: 'U', files: [LOGIN], place: '첫 계정 만들기(H-AUTH-02와 하나)' },
+  { id: 'H-STAT-06', card: 'M', files: [M], place: '통계 "최근 세션" 표·"자세히"(샘플 평균·최대)', promoted: H021 },
+  { id: 'H-V2STAT-05', card: 'M', files: [M], place: '최근 세션·자세히(H-STAT-06과 한 카드, 차트·내보내기·삭제 없음)', promoted: H021 },
+  { id: 'H-STAT-03', card: 'M', files: [M], place: '통계 "호스트 사용량" CPU·GPU·인코더 %', promoted: H021 },
+  { id: 'H-V2STAT-02', card: 'M', files: [M], place: '호스트 사용량(H-STAT-03과 한 카드)', promoted: H021 },
+  { id: 'H-STAT-02', card: 'M', files: [M], place: '호스트 사용량 수집 꺼짐 안내 한 줄(켜기 버튼 없음)', promoted: H021 },
+  { id: 'H-SET-173', card: 'M', files: [M], place: '통계 "기록 설정(고급)" 세션 기록 저장', promoted: H021 },
+  { id: 'H-SET-174', card: 'M', files: [M], place: '통계 "기록 설정(고급)" 기록 보관 일수', promoted: H021 },
 ];
+
+/** Tier-1 IDs of docs/UI1_DECISIONS.md (77); the others were promoted later. */
+export const TIER1_FEATURES = FEATURES.filter((f) => !f.promoted);
+export const PROMOTED_FEATURES = FEATURES.filter((f) => f.promoted);
 
 /** Card totals from docs/analysis/UI1b.md §2-3 (H-NAV-11 counted under U). */
 export const EXPECTED_CARD_COUNTS: Record<CardId, number> = {
@@ -131,6 +150,7 @@ export const EXPECTED_CARD_COUNTS: Record<CardId, number> = {
   T: 10,
   U: 10,
   X: 11,
+  M: 7,
 };
 
 export const SHELL_FILE = SHELL;

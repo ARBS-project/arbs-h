@@ -49,12 +49,53 @@ export function editFrom(app: AppRecord | null | undefined): AppEdit {
   };
 }
 
-export type AppBadge = 'playnite' | 'steam' | 'lutris' | 'custom';
+/**
+ * H021: the 4 apps that come with the install (docs/analysis/H021.md §1-3).
+ * - desktop, steam_bp: src_assets/windows/assets/apps.json (copied on first start).
+ * - input, monitor: added by the server itself; GET /api/apps marks them with
+ *   "remote-session" (src/confighttp.cpp getApps).
+ * Desktop is matched by name like the server does (renamed = no longer the default app).
+ */
+export type DefaultAppKind = 'desktop' | 'steam_bp' | 'input' | 'monitor';
+export const DEFAULT_APP_KINDS: readonly DefaultAppKind[] = ['desktop', 'steam_bp', 'input', 'monitor'];
+/** Default apps that are Vibepollo features and have nothing to do with ARBS haptics. */
+export const NOT_ARBS_APPS: readonly DefaultAppKind[] = ['input', 'monitor'];
+
+export function defaultAppKind(app: AppRecord | null | undefined): DefaultAppKind | null {
+  if (!app) return null;
+  if (app['remote-session'] === 'input') return 'input';
+  if (app['remote-session'] === 'monitor') return 'monitor';
+  if (app.name === 'Desktop') return 'desktop';
+  const detached = Array.isArray(app.detached) ? app.detached : [];
+  if (app.name === 'Steam Big Picture' && detached.some((d) => typeof d === 'string' && d.includes('steam://open/bigpicture')))
+    return 'steam_bp';
+  return null;
+}
+
+export type AppBadge = 'playnite' | 'steam' | 'lutris' | 'default' | 'custom';
 export function appBadge(app: AppRecord): AppBadge {
   if (app['playnite-id']) return 'playnite';
   if (app['steam-id']) return 'steam';
   if (app['lutris-id']) return 'lutris';
+  if (defaultAppKind(app)) return 'default';
   return 'custom';
+}
+
+/**
+ * System apps that "restore default apps" may bring back now. The server lists the missing ones
+ * in "restorable-system-apps" ([{id, name}]); restoring one that exists fails (400). When an
+ * older server sends no list, all three stay available (old behaviour).
+ */
+export function restorableSystemApps(payload: unknown): Set<(typeof SYSTEM_APPS)[number]> {
+  const list =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as { 'restorable-system-apps'?: unknown })['restorable-system-apps']
+      : undefined;
+  if (!Array.isArray(list)) return new Set(SYSTEM_APPS);
+  const ids = list
+    .map((item) => (item && typeof item === 'object' ? (item as { id?: unknown }).id : undefined))
+    .filter((id): id is (typeof SYSTEM_APPS)[number] => (SYSTEM_APPS as readonly unknown[]).includes(id));
+  return new Set(ids);
 }
 export function isManaged(app: AppRecord): boolean {
   return typeof app['playnite-managed'] === 'string' && app['playnite-managed'] !== '';

@@ -15,7 +15,7 @@ export interface GuardResult {
   notice: 'missing_device' | 'missing_app' | 'sign_in_first' | 'not_found';
 }
 
-const KNOWN_TOP = new Set(['/', '/devices', '/controller', '/display', '/apps', '/troubleshoot', '/account']);
+const KNOWN_TOP = new Set(['/', '/devices', '/controller', '/display', '/apps', '/stats', '/troubleshoot', '/account']);
 
 /** Path is relative to the router base (/arbs/). Returns null when the page may open. */
 export function guardRoute(input: GuardInput): GuardResult | null {

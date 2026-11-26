@@ -1,6 +1,9 @@
 <script setup lang="ts">
 // ARBS-H UI1b card A "앱": H-NAV-02, H-APP-01/02/05/08/09/10/22, H-V2LIB-03, H-V2APP-01/03/11.
-// D-UI-3 R5 (no app chosen), R7 (per-app HD haptics needs usbip_ds5), R8, R12.
+// D-UI-3 R5 (no app chosen), R6 (per-app HD haptics needs gamepad input on), R8, R12.
+// H021: "기본 앱" badge + two-line description for the 4 install default apps, "not ARBS" note on
+// Remote Input/Monitor, restore buttons only for the default apps that are missing now.
+// Per-app HD haptics is not tied to the gamepad type: it makes a DualSense for that app (H021 §4-2).
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
@@ -10,6 +13,9 @@ import ReasonText from '@/components/ReasonText.vue';
 import {
   appBadge,
   appsFrom,
+  defaultAppKind,
+  NOT_ARBS_APPS,
+  restorableSystemApps,
   appUuid,
   editFrom,
   isManaged,
@@ -20,7 +26,7 @@ import {
   type AppEdit,
   type AppRecord,
 } from '@/logic/apps';
-import { appNameReason, appSelectReason, dualSenseReason, firstReason, offlineReason, runningReason } from '@/logic/rules';
+import { appHapticsReason, appNameReason, appSelectReason, firstReason, offlineReason, runningReason } from '@/logic/rules';
 import { searchCovers, uploadCover, type CoverCandidate } from '@/services/covers';
 import { useHostStore } from '@/stores/host';
 import { useSettingsStore } from '@/stores/settings';
@@ -34,6 +40,7 @@ const settings = useSettingsStore();
 const ui = useUiStore();
 
 const apps = ref<AppRecord[]>([]);
+const restorable = ref(restorableSystemApps(null));
 const loading = ref(false);
 const busy = ref('');
 const pages = ref(1);
@@ -51,7 +58,7 @@ const offline = computed(() => offlineReason(host.online));
 const pickReason = computed(() => firstReason(offline.value, appSelectReason(editing.value)));
 const actionReason = computed(() => firstReason(offline.value, appSelectReason(!!selected.value)));
 const closeReason = computed(() => firstReason(actionReason.value, runningReason(host.session)));
-const hapticsReason = computed(() => firstReason(pickReason.value, dualSenseReason(settings.original)));
+const hapticsReason = computed(() => firstReason(pickReason.value, appHapticsReason(settings.original)));
 const saveReason = computed(() => firstReason(pickReason.value, appNameReason(edit.value.name)));
 
 function resetEdit(): void {
@@ -63,7 +70,9 @@ function resetEdit(): void {
 async function loadApps(): Promise<void> {
   loading.value = true;
   try {
-    apps.value = appsFrom(await apiGet<unknown>('/api/apps'));
+    const payload = await apiGet<unknown>('/api/apps');
+    apps.value = appsFrom(payload);
+    restorable.value = restorableSystemApps(payload);
   } catch {
     ui.say(t('apps.load_failed'), 'error');
   } finally {
@@ -220,8 +229,17 @@ onMounted(async () => {
             <img class="thumb" :src="`/api/apps/${encodeURIComponent(appUuid(app))}/cover`" alt="" loading="lazy" />
             <span class="list__grow">
               <strong>{{ app.name || t('common.unknown') }}</strong>
-              <span class="badge">{{ t(`apps.badge_${appBadge(app)}`) }}</span>
+              <span class="badge" :data-badge="appBadge(app)">{{ t(`apps.badge_${appBadge(app)}`) }}</span>
               <span v-if="isManaged(app)" class="badge">{{ t('apps.badge_managed') }}</span>
+              <template v-if="defaultAppKind(app)">
+                <small class="app-about" :data-app-about="defaultAppKind(app)">
+                  <span>{{ t(`apps.about_${defaultAppKind(app)}_what`) }}</span>
+                  <span>{{ t(`apps.about_${defaultAppKind(app)}_when`) }}</span>
+                  <span v-if="NOT_ARBS_APPS.includes(defaultAppKind(app)!)" class="app-about__note" data-not-arbs>
+                    {{ t('apps.not_arbs') }}
+                  </span>
+                </small>
+              </template>
             </span>
             <span class="row row--tight">
               <button class="button button--icon" type="button" :aria-label="t('apps.up')" :disabled="i === 0 || !!busy" @click="move(app, -1)">↑</button>
@@ -255,12 +273,15 @@ onMounted(async () => {
               :key="id"
               class="button button--ghost"
               type="button"
-              :disabled="!!busy || !!offline"
+              :disabled="!!busy || !!offline || !restorable.has(id)"
+              :data-restore="id"
               @click="restoreSystem(id)"
             >
               {{ t(`apps.system_${id}`) }}
             </button>
           </div>
+          <p class="muted">{{ t('apps.system_present') }}</p>
+          <p class="muted" data-steam-bp-note>{{ t('apps.system_steam_bp') }}</p>
         </details>
       </section>
 

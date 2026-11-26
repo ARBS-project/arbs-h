@@ -24,6 +24,8 @@ const entries: { key: SettingKey; label: string; to: string }[] = [
   { key: 'virtual_display_mode', label: 'display.mode', to: '/display' },
   { key: 'dd_resolution_option', label: 'display.resolution', to: '/display' },
   { key: 'arbs_webui_default', label: 'account.default_ui', to: '/account' },
+  { key: 'session_history_enabled', label: 'stats.history_enabled', to: '/stats' },
+  { key: 'session_history_ttl_days', label: 'stats.history_ttl', to: '/stats' },
 ];
 
 const results = computed(() => {

@@ -2,7 +2,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { appsFrom, editFrom, moveOrder, savePayload, visibleCount } from '../logic/apps.ts';
+import {
+  appBadge,
+  appsFrom,
+  defaultAppKind,
+  editFrom,
+  moveOrder,
+  NOT_ARBS_APPS,
+  restorableSystemApps,
+  savePayload,
+  visibleCount,
+} from '../logic/apps.ts';
 import {
   cleanPin,
   deviceStatus,
@@ -105,6 +115,39 @@ test('app list shape, order and paging', () => {
   assert.equal(visibleCount(30, 3), 30);
   assert.equal(editFrom({ cmd: ['a', 'b'], 'dualsense-haptics': 'true' }).cmd, 'a b');
   assert.equal(editFrom({ 'dualsense-haptics': 'true' }).dualsenseHaptics, true);
+});
+
+test('H021: the 4 install default apps get the "default" badge, the others keep theirs', () => {
+  // Shapes as GET /api/apps returns them (src_assets/windows/assets/apps.json + server remote-session apps).
+  const desktop = { uuid: 'd', name: 'Desktop', 'image-path': 'desktop.png' };
+  const steamBp = { uuid: 's', name: 'Steam Big Picture', detached: ['steam://open/bigpicture'], 'prep-cmd': [{ undo: 'steam://close/bigpicture' }] };
+  const input = { uuid: 'i', name: 'Remote Input', 'remote-session': 'input' };
+  const monitor = { uuid: 'm', name: 'Remote Monitor', 'remote-session': 'monitor' };
+  assert.equal(defaultAppKind(desktop), 'desktop');
+  assert.equal(defaultAppKind(steamBp), 'steam_bp');
+  assert.equal(defaultAppKind(input), 'input');
+  assert.equal(defaultAppKind(monitor), 'monitor');
+  for (const app of [desktop, steamBp, input, monitor]) assert.equal(appBadge(app), 'default', String(app.name));
+  // Renamed Desktop is no longer the server's system app; look-alikes without the marks are custom.
+  assert.equal(appBadge({ name: 'My Desktop' }), 'custom');
+  assert.equal(appBadge({ name: 'Steam Big Picture', detached: [] }), 'custom');
+  assert.equal(appBadge({ name: 'Remote Input' }), 'custom');
+  // Library apps keep their source badge first.
+  assert.equal(appBadge({ name: 'Desktop', 'playnite-id': 'p' }), 'playnite');
+  assert.equal(appBadge({ name: 'Elden Ring', 'steam-id': '1245620' }), 'steam');
+  assert.equal(appBadge({ name: 'Game', 'lutris-id': 'l' }), 'lutris');
+  assert.equal(appBadge({ name: 'Game' }), 'custom');
+  assert.deepEqual([...NOT_ARBS_APPS], ['input', 'monitor']);
+  assert.equal(defaultAppKind(null), null);
+});
+
+test('H021: restore buttons only for the default apps the server lists as missing', () => {
+  assert.deepEqual([...restorableSystemApps({ apps: [], 'restorable-system-apps': [{ id: 'monitor', name: 'Remote Monitor' }] })], ['monitor']);
+  assert.deepEqual([...restorableSystemApps({ apps: [], 'restorable-system-apps': [] })], []);
+  assert.deepEqual([...restorableSystemApps({ apps: [], 'restorable-system-apps': [{ id: 'steam_bp' }, { id: 'input' }, null] })], ['input']);
+  // Older server without the list: all three stay available (previous behaviour).
+  assert.deepEqual([...restorableSystemApps({ apps: [] })].sort(), ['desktop', 'input', 'monitor']);
+  assert.deepEqual([...restorableSystemApps([])].sort(), ['desktop', 'input', 'monitor']);
 });
 
 test('log levels, filter, search, summary, fatal lines', () => {

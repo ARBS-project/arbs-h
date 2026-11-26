@@ -112,16 +112,27 @@ code {
 .nav__group + .nav__group {
   margin-top: 1rem;
 }
+/* H021: group titles are headings, not menu items: small, muted (AA kept: same --arbs-muted,
+   no opacity), no pointer, no hover/selection. Items are indented under them. */
 .nav__label {
-  margin: 0 0 0.25rem;
+  margin: 0 0 0.2rem;
   padding: 0 0.6rem;
   color: var(--arbs-muted);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  cursor: default;
+  user-select: none;
+}
+.nav__items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .nav__link {
   display: block;
-  padding: 0.45rem 0.6rem;
+  padding: 0.45rem 0.6rem 0.45rem 1.1rem;
   border-left: 3px solid transparent;
   border-radius: 0.375rem;
   color: var(--arbs-text);
@@ -432,6 +443,10 @@ input[type='range'] {
   color: var(--arbs-text);
   font-size: 0.75rem;
 }
+/* H021: space between a badge and the text after it (devices: "스트리밍 중 · 연결됨"). */
+.badge + small {
+  margin-left: 0.4rem;
+}
 .badge[data-status='blocked'] {
   border-color: var(--arbs-danger);
   color: var(--arbs-danger);
@@ -620,6 +635,118 @@ input[type='range'] {
   flex-wrap: wrap;
   gap: 0.3rem 1rem;
   margin-top: 0.4rem;
+}
+
+/* H021: default app description (2 lines) and the "not ARBS" note */
+.app-about {
+  display: flex;
+  flex-direction: column;
+  margin-top: 0.2rem;
+  color: var(--arbs-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.app-about__note {
+  align-self: flex-start;
+  margin-top: 0.15rem;
+  padding: 0 0.45rem;
+  border: 1px dashed var(--arbs-border-input);
+  border-radius: 0.3rem;
+  color: var(--arbs-text);
+  font-size: 0.78rem;
+}
+
+/* H021: statistics */
+.input--short {
+  max-width: 8rem;
+}
+.stats-session + .stats-session {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--arbs-border);
+}
+.stats-session__title {
+  margin: 0 0 0.4rem;
+  font-size: 0.98rem;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0.4rem 0;
+}
+.stats__row {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--arbs-border);
+  border-radius: 0.5rem;
+  background: var(--arbs-bg);
+}
+.stats__row dt {
+  color: var(--arbs-muted);
+  font-size: 0.82rem;
+}
+.stats__row dd {
+  margin: 0.1rem 0 0;
+}
+.stats__value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.stats__help {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+}
+/* Grade words: text colour = AA on the row background (--arbs-bg) and the card (--arbs-surface). */
+.grade {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  vertical-align: 0.1em;
+}
+.grade[data-grade='good'] {
+  color: var(--arbs-ok);
+}
+.grade[data-grade='warn'] {
+  color: var(--arbs-primary);
+}
+.grade[data-grade='bad'] {
+  color: var(--arbs-danger);
+}
+.grade[data-grade='info'] {
+  color: var(--arbs-muted);
+}
+.stats-detail {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--arbs-border);
+}
+.table-wrap {
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.table th,
+.table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--arbs-border);
+  text-align: left;
+  white-space: nowrap;
+}
+.table th {
+  color: var(--arbs-muted);
+  font-weight: 600;
+}
+.table__row--selected td {
+  background: var(--arbs-primary-tint);
 }
 
 /* narrow screens (phone remote management): one column, menu as a drawer */

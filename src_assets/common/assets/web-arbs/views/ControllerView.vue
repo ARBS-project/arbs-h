@@ -1,24 +1,40 @@
 <script setup lang="ts">
 // ARBS-H UI1b card C "ARBS 컨트롤러": H-SET-065/067/069/071/203/204/205.
 // First input fields for arbs_trigger_status and arbs_enet_precise_time (PATCH /api/config).
-// D-UI-3 R6 (gamepad input off) and R7 (gamepad is not usbip_ds5).
+// D-UI-3 R6 (gamepad input off) and R7 (H021: the pad is not made a DualSense for this type).
+// H021: gamepad list = ARBS-confirmed types only (a hidden current value is shown as is, with a note),
+// trigger status h2b by default, "off" in the advanced part, "enabled" only when it is the current value.
+// Nothing here changes a value by itself; only the user's choice goes into the PATCH.
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import ReasonText from '@/components/ReasonText.vue';
-import { clampGain, GAMEPAD_TYPES, TRIGGER_STATUS, type TriggerStatus } from '@/logic/config';
-import { controllerOffReason, dualSenseReason, gamepadWarning } from '@/logic/rules';
+import { clampGain, gamepadOptions, isHiddenGamepad, triggerOptions, type TriggerStatus } from '@/logic/config';
+import { controllerOffReason, dualSenseReason } from '@/logic/rules';
 import { useSettingsStore } from '@/stores/settings';
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const settings = useSettingsStore();
 const draft = computed(() => settings.draft);
 
 const offReason = computed(() => controllerOffReason(draft.value));
 const dsReason = computed(() => dualSenseReason(draft.value));
-const warn = computed(() => gamepadWarning(draft.value));
+const options = computed(() => gamepadOptions(draft.value.gamepad));
+const hiddenGamepad = computed(() => isHiddenGamepad(draft.value.gamepad));
+const triggers = computed(() => triggerOptions(draft.value.arbs_trigger_status));
+const triggerOff = computed(() => draft.value.arbs_trigger_status === 'disabled');
+const triggerOld = computed(() => draft.value.arbs_trigger_status === 'enabled');
 const triggerChanged = computed(() => settings.changed.includes('arbs_trigger_status'));
 const preciseChanged = computed(() => settings.changed.includes('arbs_enet_precise_time'));
+
+function gamepadLabel(value: string, hidden: boolean): string {
+  const name = te(`gamepad.${value}`) ? t(`gamepad.${value}`) : value;
+  return hidden ? `${name} ${t('controller.gamepad_hidden_mark')}` : name;
+}
+
+function setTriggerOff(event: Event): void {
+  settings.set('arbs_trigger_status', (event.target as HTMLInputElement).checked ? 'disabled' : 'h2b');
+}
 
 function setGain(event: Event): void {
   settings.set('dualsense_haptics_gain', clampGain((event.target as HTMLInputElement).value));
@@ -57,17 +73,26 @@ function setGain(event: Event): void {
             class="input"
             :value="draft.gamepad"
             :disabled="!!offReason"
-            :aria-describedby="offReason ? 'reason-off-gamepad' : warn ? 'warn-gamepad' : undefined"
+            :aria-describedby="offReason ? 'reason-off-gamepad' : hiddenGamepad ? 'warn-gamepad help-gamepad' : 'help-gamepad'"
             data-setting="gamepad"
             @change="settings.set('gamepad', ($event.target as HTMLSelectElement).value)"
           >
-            <option v-for="g in GAMEPAD_TYPES" :key="g" :value="g" :data-feature="g === 'usbip_ds5' ? 'H-SET-205' : undefined">
-              {{ t(`gamepad.${g}`) }}
+            <option
+              v-for="g in options"
+              :key="g.value"
+              :value="g.value"
+              :data-hidden-value="g.hidden ? 'true' : undefined"
+              :data-feature="g.value === 'usbip_ds5' ? 'H-SET-205' : undefined"
+            >
+              {{ gamepadLabel(g.value, g.hidden) }}
             </option>
           </select>
+          <small id="help-gamepad" class="muted" data-gamepad-help>
+            {{ hiddenGamepad ? t('controller.gamepad_help_hidden') : t(`gamepad_help.${draft.gamepad}`) }}
+          </small>
         </label>
         <ReasonText id="reason-off-gamepad" :reason="offReason" />
-        <p v-if="warn" id="warn-gamepad" class="banner banner--warn" role="alert" data-gamepad-warning>
+        <p v-if="hiddenGamepad" id="warn-gamepad" class="banner banner--warn" role="status" data-gamepad-warning>
           {{ t('controller.gamepad_warning') }}
         </p>
 
@@ -102,10 +127,13 @@ function setGain(event: Event): void {
             data-setting="arbs_trigger_status"
             @change="settings.set('arbs_trigger_status', ($event.target as HTMLSelectElement).value as TriggerStatus)"
           >
-            <option v-for="v in TRIGGER_STATUS" :key="v" :value="v">{{ t(`controller.trigger_${v}`) }}</option>
+            <option v-for="v in triggers" :key="v" :value="v">{{ t(`controller.trigger_${v}`) }}</option>
           </select>
           <small id="help-trigger" class="muted">{{ t('controller.trigger_help') }}</small>
         </label>
+        <p v-if="triggerOld" class="banner banner--info" role="status" data-trigger-enabled-note>
+          {{ t('controller.trigger_enabled_note') }}
+        </p>
         <p v-if="triggerChanged" class="banner banner--info" role="status" data-restart-hint>
           {{ t('controller.trigger_restart') }}
         </p>
@@ -133,6 +161,21 @@ function setGain(event: Event): void {
 
         <details class="details" data-advanced>
           <summary>{{ t('controller.advanced') }}</summary>
+          <label class="switch">
+            <input
+              type="checkbox"
+              role="switch"
+              :checked="triggerOff"
+              :disabled="!!dsReason"
+              :aria-describedby="dsReason ? 'reason-ds' : 'help-trigger-off'"
+              data-setting="arbs_trigger_status_off"
+              @change="setTriggerOff"
+            />
+            <span>
+              <strong>{{ t('controller.trigger_off') }}</strong>
+              <small id="help-trigger-off" class="muted">{{ t('controller.trigger_off_help') }}</small>
+            </span>
+          </label>
           <label class="switch" data-feature="H-SET-203">
             <input
               type="checkbox"

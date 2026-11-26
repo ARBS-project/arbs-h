@@ -5,7 +5,7 @@ import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { CARD_LABELS, EXPECTED_CARD_COUNTS, FEATURES, type CardId } from '../logic/features.ts';
+import { CARD_LABELS, EXPECTED_CARD_COUNTS, FEATURES, PROMOTED_FEATURES, TIER1_FEATURES, type CardId } from '../logic/features.ts';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const ID = /\bH-[A-Z0-9]+-\d{2,3}\b/g;
@@ -21,10 +21,13 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-test('77 unique IDs, card totals as in the analysis table', () => {
+test('77 tier-1 + 7 promoted (H021) unique IDs, card totals as in the analysis tables', () => {
   const ids = FEATURES.map((f) => f.id);
-  assert.equal(ids.length, 77);
-  assert.equal(new Set(ids).size, 77);
+  assert.equal(TIER1_FEATURES.length, 77);
+  assert.equal(PROMOTED_FEATURES.length, 7);
+  assert.equal(ids.length, 84);
+  assert.equal(new Set(ids).size, 84);
+  for (const f of PROMOTED_FEATURES) assert.equal(f.card, 'M', f.id);
   const counts: Record<string, number> = {};
   for (const f of FEATURES) counts[f.card] = (counts[f.card] ?? 0) + 1;
   assert.deepEqual(counts, EXPECTED_CARD_COUNTS);
@@ -71,8 +74,15 @@ test('matches docs/UI1_DECISIONS.md when the docs folder is next to the reposito
   const rest = text.slice(text.indexOf('## 2차'));
   const docIds = [...new Set(tier1.match(/^\| (H-[A-Z0-9]+-\d{2,3}) \|/gm)!.map((l) => l.slice(2, -2)))];
   assert.equal(docIds.length, 77);
-  assert.deepEqual([...docIds].sort(), FEATURES.map((f) => f.id).sort());
+  assert.deepEqual([...docIds].sort(), TIER1_FEATURES.map((f) => f.id).sort());
   const other = new Set(rest.match(ID) ?? []);
   assert.ok(other.size > 300, 'other tiers parsed');
-  for (const f of FEATURES) assert.ok(!other.has(f.id), `${f.id} is also listed outside tier 1`);
+  for (const f of TIER1_FEATURES) assert.ok(!other.has(f.id), `${f.id} is also listed outside tier 1`);
+  // Promoted IDs come from tier 2 or advanced (never from "excluded"), by a recorded decision.
+  const excluded = text.slice(text.indexOf('## 뺌'));
+  for (const f of PROMOTED_FEATURES) {
+    assert.ok(other.has(f.id), `${f.id} promoted but not listed in another tier`);
+    assert.ok(!excluded.includes(f.id), `${f.id} was excluded`);
+    assert.match(f.promoted!, /^EA-[A-Z0-9]+-R-\d{2}$/, f.id);
+  }
 });

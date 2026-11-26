@@ -53,7 +53,7 @@ test('every literal key used by the screens and rules exists', () => {
   for (const file of files(root, /\.(vue|ts)$/)) {
     const text = readFileSync(file, 'utf8');
     for (const m of text.matchAll(/\bt\(\s*'([a-z_0-9]+\.[a-z_0-9.]+)'/g)) used.add(m[1]!);
-    for (const m of text.matchAll(/'((?:reason|save|guard|status|controller|account|display)\.[a-z_0-9]+)'/g)) used.add(m[1]!);
+    for (const m of text.matchAll(/'((?:reason|save|guard|status|controller|account|display|stats)\.[a-z_0-9]+)'/g)) used.add(m[1]!);
   }
   assert.ok(used.size > 150, `found ${used.size}`);
   for (const key of used) assert.ok(key in K, `missing ${key}`);
@@ -67,7 +67,11 @@ test('dynamic key families are complete', () => {
     'display.resolution_': ['auto', 'manual', 'disabled'],
     'display.done_': ['terminate', 'reset', 'capture', 'delete'],
     'devices.status_': ['streaming', 'blocked', 'active', 'never_seen'],
-    'apps.badge_': ['playnite', 'steam', 'lutris', 'custom', 'managed'],
+    'apps.badge_': ['playnite', 'steam', 'lutris', 'default', 'custom', 'managed'],
+    'apps.about_': ['desktop_what', 'desktop_when', 'steam_bp_what', 'steam_bp_when', 'input_what', 'input_when', 'monitor_what', 'monitor_when'],
+    'gamepad_help.': ['usbip_ds5', 'auto'],
+    'stats.grade_': ['good', 'warn', 'bad'],
+    'stats.verdict_': ['healthy', 'degraded', 'failed', 'unknown'],
     'apps.system_': ['desktop', 'monitor', 'input'],
     'apps.cover_': ['searching', 'none', 'failed'],
     'status.readiness_': ['ready', 'attention', 'streaming', 'unknown'],
@@ -91,4 +95,15 @@ test('button says "ARBS-H 다시 시작", never "Restart Vibepollo"', () => {
   assert.equal(K['common.restart'], 'ARBS-H 다시 시작');
   assert.equal(E['common.restart'], 'Restart ARBS-H');
   for (const v of [...Object.values(K), ...Object.values(E)]) assert.doesNotMatch(v, /Vibepollo 다시|Restart Vibepollo/);
+});
+
+test('H021 fixed texts: hidden gamepad note, plan A reason, "not ARBS" note', () => {
+  assert.equal(K['controller.gamepad_warning'], '아직 ARBS에서 확인되지 않은 종류입니다. ARBS에는 DualSense(usbip_ds5)를 권장합니다.');
+  assert.match(E['controller.gamepad_warning']!, /not been confirmed with ARBS yet/);
+  assert.doesNotMatch(K['controller.gamepad_warning']!, /일반 진동만/);
+  assert.equal(K['reason.need_dualsense'], 'DualSense로 연결될 때만 적용됩니다(usbip_ds5 권장).');
+  assert.equal(K['apps.badge_default'], '기본 앱');
+  assert.match(K['apps.not_arbs']!, /ARBS 진동과 무관/);
+  assert.match(K['gamepad.usbip_ds5']!, /ARBS 권장\(모든 기능\)/);
+  assert.equal(K['nav.stats'], '통계');
 });
