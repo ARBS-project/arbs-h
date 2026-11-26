@@ -31,6 +31,7 @@ import {
   readDiagnostics,
   recommend,
   recordChange,
+  restoreBlockReason,
   ROUTER_GUIDE_LINKS,
   serverBool,
   shown,
@@ -106,6 +107,11 @@ function raw(key: WizardKey): string {
   return value === undefined || value === null ? '' : String(value);
 }
 
+/** S3 on step 5: "이전 값으로" that would give UPnP on + origin = wan is disabled with this reason. */
+function revertReason(c: Change): string | null {
+  return restoreBlockReason(c.key, c.before, config.value, diag.value?.originWan ?? false);
+}
+
 function valueText(key: WizardKey, value: string): string {
   if (value === '') return t('remote.v_none');
   if (key === 'upnp' || key === 'enable_pairing') return serverBool(value, false) ? t('remote.v_enabled') : t('remote.v_disabled');
@@ -138,7 +144,7 @@ async function change(key: WizardKey, value: string, restore = false): Promise<v
   const before = raw(key);
   let body: Record<string, string>;
   try {
-    body = wizardPatch(key, value, restore);
+    body = wizardPatch(key, value, restore, config.value, diag.value?.originWan ?? false);
   } catch {
     ui.say(t('common.failed'), 'error');
     return;
@@ -673,12 +679,15 @@ onMounted(async () => {
                 <button
                   class="button button--ghost"
                   type="button"
-                  :disabled="!!busy || !host.online"
+                  :disabled="!!busy || !host.online || !!revertReason(c)"
+                  :aria-disabled="!!revertReason(c)"
+                  :aria-describedby="revertReason(c) ? `reason-revert-${c.key}` : undefined"
                   :data-revert="c.key"
                   @click="change(c.key, c.before, true)"
                 >
                   {{ t('remote.revert') }}
                 </button>
+                <ReasonText :id="`reason-revert-${c.key}`" :reason="revertReason(c)" />
               </td>
             </tr>
           </tbody>

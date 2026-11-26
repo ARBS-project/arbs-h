@@ -1,5 +1,6 @@
 // ARBS-H 0.3.0 (NET2): "외부 접속" page logic — ports, blocks, hiding, wizard branches, PATCH keys, prev_port.
-// Addresses here are format examples only (documentation ranges and private/shared ranges), never real values.
+// Addresses here are documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32); range tests use
+// made-up values inside the range (x.217.43 style), never a common router value and never a real network value.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
@@ -29,6 +30,7 @@ import {
   readDiagnostics,
   recommend,
   recordChange,
+  restoreBlockReason,
   ROUTER_GUIDE_LINKS,
   shown,
   STACKON_GUIDE_URL,
@@ -129,8 +131,53 @@ test('PATCH only the 6 wizard keys, only offered values; restore writes the old 
   assert.throws(() => wizardPatch('lan_encryption_mode', '2'));
   assert.throws(() => wizardPatch('wan_encryption_mode', '2'), 'D8: the wizard does not change wan_encryption_mode');
   assert.deepEqual(wizardPatch('enable_pairing', 'disabled'), { enable_pairing: 'disabled' });
-  assert.deepEqual(wizardPatch('port', '', true), { port: '' }, 'restore "no line" removes the key');
-  assert.deepEqual(wizardPatch('wan_encryption_mode', '1', true), { wan_encryption_mode: '1' });
+  assert.deepEqual(wizardPatch('port', '', true, {}), { port: '' }, 'restore "no line" removes the key');
+  assert.deepEqual(wizardPatch('wan_encryption_mode', '1', true, {}), { wan_encryption_mode: '1' });
+  assert.throws(() => wizardPatch('port', '', true), /needs the current settings/);
+});
+
+test('S3 on "이전 값으로": never back into UPnP on + origin = wan (both directions)', () => {
+  // Reproduction from the check: origin starts at wan -> 3c "lan" -> "UPnP on" -> step 5 "Previous value" for origin.
+  let config: Record<string, unknown> = { origin_web_ui_allowed: 'wan' };
+  let list = recordChange([], 'origin_web_ui_allowed', 'wan', 'lan');
+  config = { ...config, ...wizardPatch('origin_web_ui_allowed', 'lan') };
+  assert.equal(upnpBlockReason(originOf(config) === 'wan'), null, '3c: UPnP on is allowed once origin is lan');
+  list = recordChange(list, 'upnp', '', 'enabled');
+  config = { ...config, ...wizardPatch('upnp', 'enabled') };
+  const origin = list.find((c) => c.key === 'origin_web_ui_allowed')!;
+  assert.equal(origin.before, 'wan');
+  // (a) origin back to wan while UPnP is on: blocked, button reason + wizardPatch refuses.
+  assert.equal(restoreBlockReason(origin.key, origin.before, config), 'remote.revert_blocked_origin');
+  assert.throws(() => wizardPatch(origin.key, origin.before, true, config), /restore blocked/);
+  // UPnP back to its value before ('' = no line = off) is fine; after that origin can go back to wan.
+  const upnp = list.find((c) => c.key === 'upnp')!;
+  assert.equal(restoreBlockReason(upnp.key, upnp.before, config), null);
+  assert.deepEqual(wizardPatch(upnp.key, upnp.before, true, config), { upnp: '' });
+  config = { origin_web_ui_allowed: 'lan' };
+  assert.equal(restoreBlockReason(origin.key, origin.before, config), null);
+  assert.deepEqual(wizardPatch(origin.key, origin.before, true, config), { origin_web_ui_allowed: 'wan' });
+
+  // (b) UPnP back to enabled while origin = wan (UPnP was on before, the user turned it off, origin was set to wan elsewhere).
+  const wanNoUpnp = { origin_web_ui_allowed: 'wan', upnp: 'disabled' };
+  assert.equal(restoreBlockReason('upnp', 'enabled', wanNoUpnp), 'remote.revert_blocked_upnp');
+  assert.throws(() => wizardPatch('upnp', 'enabled', true, wanNoUpnp), /restore blocked/);
+  for (const on of ['enabled', 'true', 'on', '1', 'yes']) {
+    assert.equal(restoreBlockReason('upnp', on, wanNoUpnp), 'remote.revert_blocked_upnp', on);
+  }
+  // The running server still at wan (file already lan, no restart yet) also blocks UPnP back on.
+  assert.equal(restoreBlockReason('upnp', 'enabled', { origin_web_ui_allowed: 'lan' }, true), 'remote.revert_blocked_upnp');
+  assert.equal(restoreBlockReason('upnp', 'enabled', { origin_web_ui_allowed: 'lan' }, false), null);
+  assert.equal(restoreBlockReason('upnp', 'disabled', wanNoUpnp, true), null, 'turning UPnP off is never blocked');
+  // origin back to wan is judged by the file value (the key itself), not by the running origin.
+  assert.equal(restoreBlockReason('origin_web_ui_allowed', 'lan', { upnp: 'enabled' }, true), null);
+  assert.equal(restoreBlockReason('origin_web_ui_allowed', 'WAN', { upnp: 'enabled' }), 'remote.revert_blocked_origin');
+  assert.equal(restoreBlockReason('origin_web_ui_allowed', '', { upnp: 'enabled' }), null, "'' = server default lan");
+  // Other keys are never blocked, even when the settings already have the combination.
+  const both = { origin_web_ui_allowed: 'wan', upnp: 'enabled' };
+  for (const key of ['port', 'lan_encryption_mode', 'wan_encryption_mode', 'enable_pairing']) {
+    assert.equal(restoreBlockReason(key, '', both, true), null, key);
+  }
+  assert.deepEqual(wizardPatch('port', '', true, both, true), { port: '' });
 });
 
 test('change list keeps the first "before" and drops a key that is back to it', () => {
@@ -148,29 +195,29 @@ test('change list keeps the first "before" and drops a key that is back to it', 
 });
 
 test('addresses are hidden by default; JSON, String() and console show only the mask', () => {
-  const secret = hideText('100.64.0.1');
+  const secret = hideText('203.0.113.45');
   assert.equal(shown(secret, false), MASK);
-  assert.equal(shown(secret, true), '100.64.0.1');
+  assert.equal(shown(secret, true), '203.0.113.45');
   assert.equal(String(secret), MASK);
   assert.equal(`${secret}`, MASK);
   assert.equal(JSON.stringify({ secret }), JSON.stringify({ secret: MASK }));
-  assert.doesNotMatch(inspect(secret), /100\.64/);
-  assert.doesNotMatch(inspect({ list: [secret] }, { depth: 5 }), /100\.64/);
+  assert.doesNotMatch(inspect(secret), /203\.0\.113/);
+  assert.doesNotMatch(inspect({ list: [secret] }, { depth: 5 }), /203\.0\.113/);
   assert.ok(Object.isFrozen(secret));
   const d = readDiagnostics(
-    { port: 45989, interfaces: [{ kind: 'cgnat_v4', address: '100.64.0.1', tailscale_like: true }, { kind: 'loopback', address: '127.0.0.1' }] },
+    { port: 45989, interfaces: [{ kind: 'cgnat_v4', address: '203.0.113.45', tailscale_like: true }, { kind: 'loopback', address: '127.0.0.1' }] },
     {},
   );
   assert.equal(d.interfaces.length, 1, 'unknown kinds dropped');
-  assert.doesNotMatch(JSON.stringify(d), /100\.64|127\.0/);
-  assert.doesNotMatch(inspect(d, { depth: 10 }), /100\.64/);
-  assert.equal(d.interfaces[0]!.address.reveal(), '100.64.0.1');
+  assert.doesNotMatch(JSON.stringify(d), /203\.0\.113|127\.0/);
+  assert.doesNotMatch(inspect(d, { depth: 10 }), /203\.0\.113/);
+  assert.equal(d.interfaces[0]!.address.reveal(), '203.0.113.45');
 });
 
 test('text for Moonlight: ":port" when not 47989, [IPv6]:port', () => {
-  assert.equal(moonlightAddress('100.64.0.1', 47989), '100.64.0.1');
-  assert.equal(moonlightAddress('100.64.0.1', 45989), '100.64.0.1:45989');
-  assert.equal(moonlightAddress('192.168.0.10', 46000), '192.168.0.10:46000');
+  assert.equal(moonlightAddress('198.51.100.23', 47989), '198.51.100.23');
+  assert.equal(moonlightAddress('198.51.100.23', 45989), '198.51.100.23:45989');
+  assert.equal(moonlightAddress('203.0.113.45', 46000), '203.0.113.45:46000');
   assert.equal(moonlightAddress('2001:db8::1', 45989), '[2001:db8::1]:45989');
   assert.equal(moonlightAddress('2001:db8::1', 47989), '2001:db8::1');
 });
@@ -179,13 +226,13 @@ test('kind of the address this page was opened with', () => {
   assert.equal(hostKind('localhost'), 'this_pc');
   assert.equal(hostKind('127.0.0.1'), 'this_pc');
   assert.equal(hostKind('[::1]'), 'this_pc');
-  assert.equal(hostKind('192.168.0.10'), 'private');
-  assert.equal(hostKind('10.1.2.3'), 'private');
-  assert.equal(hostKind('172.20.0.1'), 'private');
-  assert.equal(hostKind('172.32.0.1'), 'public');
-  assert.equal(hostKind('100.64.0.1'), 'cgnat');
-  assert.equal(hostKind('100.127.0.1'), 'cgnat');
-  assert.equal(hostKind('100.128.0.1'), 'public');
+  assert.equal(hostKind('192.168.217.43'), 'private');
+  assert.equal(hostKind('10.217.43.9'), 'private');
+  assert.equal(hostKind('172.20.217.43'), 'private');
+  assert.equal(hostKind('172.32.217.43'), 'public');
+  assert.equal(hostKind('100.64.217.43'), 'cgnat');
+  assert.equal(hostKind('100.127.217.43'), 'cgnat');
+  assert.equal(hostKind('100.128.217.43'), 'public');
   assert.equal(hostKind('203.0.113.7'), 'public');
   assert.equal(hostKind('[2001:db8::1]'), 'ipv6');
   assert.equal(hostKind('my-pc.example'), 'name');
@@ -247,7 +294,7 @@ test('prev_port and step from the query; new web UI link', () => {
   assert.equal(parsePrevPort(['45989']), 45989);
   assert.equal(parsePrevPort('1018'), null);
   assert.equal(parsePrevPort('47989x'), null);
-  assert.equal(parsePrevPort('100.64.0.1'), null, 'never an address');
+  assert.equal(parsePrevPort('198.51.100.23'), null, 'never an address');
   assert.equal(parsePrevPort(undefined), null);
   assert.equal(parseStep('3d'), '3d');
   assert.equal(parseStep('9'), '0');

@@ -5,7 +5,8 @@
  * listener states (S4) and the GET /api/network/diagnostics body (S1, docs/analysis/NET2.md 4-5).
  *
  * Addresses below are documentation / format examples only (RFC 5737 203.0.113.0/24 and
- * 198.51.100.0/24, RFC 3849 2001:db8::/32, private and shared ranges), never a real network value.
+ * 198.51.100.0/24, RFC 3849 2001:db8::/32). Range tests use made-up values inside the range (x.217.43 style),
+ * never a common router / gateway value and never a real network value.
  */
 #include "src/arbs_listener_status.h"
 #include "src/arbs_network_diagnostics.h"
@@ -134,27 +135,27 @@ namespace {
 
   // ---------------- address kinds ----------------
   TEST(ArbsAddressKind, Ipv4) {
-    EXPECT_EQ(np::kind_of_v4({10, 1, 2, 3}), np::addr_kind_e::private_v4);
-    EXPECT_EQ(np::kind_of_v4({172, 16, 0, 1}), np::addr_kind_e::private_v4);
-    EXPECT_EQ(np::kind_of_v4({172, 31, 255, 1}), np::addr_kind_e::private_v4);
-    EXPECT_EQ(np::kind_of_v4({172, 32, 0, 1}), np::addr_kind_e::public_v4);
-    EXPECT_EQ(np::kind_of_v4({192, 168, 0, 10}), np::addr_kind_e::private_v4);
-    EXPECT_EQ(np::kind_of_v4({100, 64, 0, 1}), np::addr_kind_e::cgnat_v4);
-    EXPECT_EQ(np::kind_of_v4({100, 127, 255, 254}), np::addr_kind_e::cgnat_v4);
-    EXPECT_EQ(np::kind_of_v4({100, 128, 0, 1}), np::addr_kind_e::public_v4);
-    EXPECT_EQ(np::kind_of_v4({100, 63, 0, 1}), np::addr_kind_e::public_v4);
+    EXPECT_EQ(np::kind_of_v4({10, 217, 43, 9}), np::addr_kind_e::private_v4);
+    EXPECT_EQ(np::kind_of_v4({172, 16, 217, 43}), np::addr_kind_e::private_v4);
+    EXPECT_EQ(np::kind_of_v4({172, 31, 217, 43}), np::addr_kind_e::private_v4);
+    EXPECT_EQ(np::kind_of_v4({172, 32, 217, 43}), np::addr_kind_e::public_v4);
+    EXPECT_EQ(np::kind_of_v4({192, 168, 217, 43}), np::addr_kind_e::private_v4);
+    EXPECT_EQ(np::kind_of_v4({100, 64, 217, 43}), np::addr_kind_e::cgnat_v4);
+    EXPECT_EQ(np::kind_of_v4({100, 127, 217, 43}), np::addr_kind_e::cgnat_v4);
+    EXPECT_EQ(np::kind_of_v4({100, 128, 217, 43}), np::addr_kind_e::public_v4);
+    EXPECT_EQ(np::kind_of_v4({100, 63, 217, 43}), np::addr_kind_e::public_v4);
     EXPECT_EQ(np::kind_of_v4({203, 0, 113, 7}), np::addr_kind_e::public_v4);
-    EXPECT_EQ(np::kind_of_v4({169, 254, 1, 1}), np::addr_kind_e::link_local);
+    EXPECT_EQ(np::kind_of_v4({169, 254, 217, 43}), np::addr_kind_e::link_local);
     EXPECT_EQ(np::kind_of_v4({127, 0, 0, 1}), np::addr_kind_e::loopback);
     EXPECT_EQ(np::kind_of_v4({0, 0, 0, 0}), np::addr_kind_e::other);
-    EXPECT_EQ(np::kind_of_v4({239, 1, 1, 1}), np::addr_kind_e::other);
+    EXPECT_EQ(np::kind_of_v4({239, 217, 43, 9}), np::addr_kind_e::other);
   }
 
   TEST(ArbsAddressKind, Ipv6AndTailscalePrefix) {
     const std::array<std::uint8_t, 16> doc {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
-    const std::array<std::uint8_t, 16> ula {0xfd, 0x12, 0x34, 0x56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
-    const std::array<std::uint8_t, 16> ts {0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
-    const std::array<std::uint8_t, 16> ll {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    const std::array<std::uint8_t, 16> ula {0xfd, 0x9e, 0x21, 0xa7, 0x43, 0xc5, 0, 0, 0, 0, 0, 0, 0, 0xd9, 0x2b, 0x43};
+    const std::array<std::uint8_t, 16> ts {0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0xd9, 0x2b, 0x43};
+    const std::array<std::uint8_t, 16> ll {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xd9, 0x2b, 0x43};
     const std::array<std::uint8_t, 16> lo {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
     EXPECT_EQ(np::kind_of_v6(doc), np::addr_kind_e::ipv6_global);
     EXPECT_EQ(np::kind_of_v6(ula), np::addr_kind_e::ipv6_ula);
@@ -171,18 +172,37 @@ namespace {
   // ---------------- S2 ----------------
   TEST(ArbsUpnpStatus, WanKindFromTextOnly) {
     EXPECT_EQ(np::wan_kind_of("203.0.113.7"), np::wan_kind_e::public_);
-    EXPECT_EQ(np::wan_kind_of("100.100.1.1"), np::wan_kind_e::cgnat);
-    EXPECT_EQ(np::wan_kind_of("192.168.0.1"), np::wan_kind_e::private_);
-    EXPECT_EQ(np::wan_kind_of("10.0.0.1"), np::wan_kind_e::private_);
+    EXPECT_EQ(np::wan_kind_of("100.91.217.43"), np::wan_kind_e::cgnat);
+    EXPECT_EQ(np::wan_kind_of("192.168.217.43"), np::wan_kind_e::private_);
+    EXPECT_EQ(np::wan_kind_of("10.217.43.9"), np::wan_kind_e::private_);
     EXPECT_EQ(np::wan_kind_of(""), np::wan_kind_e::unknown);
     EXPECT_EQ(np::wan_kind_of("0.0.0.0"), np::wan_kind_e::unknown);
     EXPECT_EQ(np::wan_kind_of("garbage"), np::wan_kind_e::unknown);
-    EXPECT_EQ(np::wan_kind_of("1.2.3"), np::wan_kind_e::unknown);
-    EXPECT_EQ(np::wan_kind_of("1.2.3.4.5"), np::wan_kind_e::unknown);
-    EXPECT_EQ(np::wan_kind_of("256.1.1.1"), np::wan_kind_e::unknown);
-    EXPECT_EQ(np::wan_kind_of("1.2.3.4 "), np::wan_kind_e::unknown);
+    EXPECT_EQ(np::wan_kind_of("203.0.113"), np::wan_kind_e::unknown);
+    EXPECT_EQ(np::wan_kind_of("203.0.113.7.5"), np::wan_kind_e::unknown);
+    EXPECT_EQ(np::wan_kind_of("256.0.113.7"), np::wan_kind_e::unknown);
+    EXPECT_EQ(np::wan_kind_of("203.0.113.7 "), np::wan_kind_e::unknown);
     EXPECT_EQ(np::to_string(np::wan_kind_e::public_), "public");
     EXPECT_EQ(np::to_string(np::wan_kind_e::private_), "private");
+  }
+
+  // P6: the UPnP debug lines ("Found device", "Found valid IGD device") log only the kind of the router URL host.
+  TEST(ArbsUpnpStatus, DeviceUrlLoggedAsKindOnly) {
+    EXPECT_EQ(np::url_host_kind("http://192.168.217.43:1900/gatedesc.xml"), "private_v4");
+    EXPECT_EQ(np::url_host_kind("http://203.0.113.45:5000/rootDesc.xml"), "public_v4");
+    EXPECT_EQ(np::url_host_kind("http://100.91.217.43/desc"), "cgnat_v4");
+    EXPECT_EQ(np::url_host_kind("http://user@198.51.100.23:80/"), "public_v4");
+    EXPECT_EQ(np::url_host_kind("http://[2001:db8::1]:5000/desc.xml"), "ipv6");
+    EXPECT_EQ(np::url_host_kind("http://router.example/desc.xml"), "name");
+    EXPECT_EQ(np::url_host_kind("http://198.51.100/desc.xml"), "unknown");
+    EXPECT_EQ(np::url_host_kind("http://[2001:db8::1/desc.xml"), "unknown");
+    EXPECT_EQ(np::url_host_kind("http:///desc.xml"), "unknown");
+    EXPECT_EQ(np::url_host_kind(""), "unknown");
+    EXPECT_EQ(np::url_host_kind("198.51.100.23"), "unknown");
+    for (const char *url : {"http://192.168.217.43:1900/gatedesc.xml", "http://[2001:db8::1]:5000/desc.xml", "http://router.example/desc.xml"}) {
+      const std::string kind {np::url_host_kind(url)};
+      EXPECT_EQ(kind.find_first_of(".:/["), std::string::npos) << kind;
+    }
   }
 
   TEST(ArbsUpnpStatus, EnumNamesAndStore) {
@@ -242,8 +262,8 @@ namespace {
     in.listeners = {ls::state_e::ok, ls::state_e::ok, ls::state_e::ok, ls::state_e::failed, ls::state_e::not_started};
     in.interfaces_supported = true;
     in.interfaces = {
-      {np::addr_kind_e::private_v4, "192.168.0.10", false},
-      {np::addr_kind_e::cgnat_v4, "100.64.0.1", true},
+      {np::addr_kind_e::private_v4, "198.51.100.23", false},
+      {np::addr_kind_e::cgnat_v4, "203.0.113.45", true},
       {np::addr_kind_e::ipv6_global, "2001:db8::1", false},
       {np::addr_kind_e::loopback, "127.0.0.1", false},
       {np::addr_kind_e::other, "198.51.100.255", false},
@@ -299,7 +319,7 @@ namespace {
 
   TEST(ArbsNetworkDiagnostics, DefaultPortNoteAndNonWindows) {
     nd::inputs_t in;
-    in.interfaces = {{np::addr_kind_e::private_v4, "192.168.0.10", false}};
+    in.interfaces = {{np::addr_kind_e::private_v4, "198.51.100.23", false}};
     in.interfaces_supported = false;
     const auto out = nd::build(in);
     EXPECT_EQ(out["port"], 47989);
@@ -335,16 +355,16 @@ namespace {
     }
     const auto body = nd::build(sample_inputs()).dump();
     (void) np::wan_kind_of("203.0.113.7");
-    (void) np::kind_of_v4({192, 168, 0, 10});
+    (void) np::kind_of_v4({192, 168, 217, 43});
     (void) np::port_warning_text(1024);
     logging::core::get()->remove_sink(sink);
     sink->flush();
     EXPECT_EQ(records, 0u);
     const auto logged = stream->str();
-    for (const char *address : {"192.168.0.10", "100.64.0.1", "2001:db8::1", "203.0.113.7"}) {
+    for (const char *address : {"198.51.100.23", "203.0.113.45", "2001:db8::1", "203.0.113.7"}) {
       EXPECT_EQ(logged.find(address), std::string::npos) << address;
     }
-    EXPECT_NE(body.find("192.168.0.10"), std::string::npos) << "the screen still gets the address (shown hidden)";
+    EXPECT_NE(body.find("198.51.100.23"), std::string::npos) << "the screen still gets the address (shown hidden)";
   }
 
   // The route is under /api/: without credentials the shared sign-in check answers 401 (same as every API).

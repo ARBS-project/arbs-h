@@ -367,7 +367,8 @@ namespace upnp {
         }
 
         for (auto dev = device.get(); dev != nullptr; dev = dev->pNext) {
-          BOOST_LOG(debug) << "Found device: "sv << dev->descURL;
+          // ARBS-H 0.3.0 (P6): the router's URL holds its address, so only the host kind is logged.
+          BOOST_LOG(debug) << "Found device ("sv << arbs::netpolicy::url_host_kind(dev->descURL ? dev->descURL : "") << ')';
         }
 
         std::array<char, INET6_ADDRESS_STRLEN> lan_addr;
@@ -390,7 +391,7 @@ namespace upnp {
 
         std::string lan_addr_str {lan_addr.data()};
 
-        BOOST_LOG(debug) << "Found valid IGD device: "sv << urls->rootdescURL;
+        BOOST_LOG(debug) << "Found valid IGD device ("sv << arbs::netpolicy::url_host_kind(urls->rootdescURL ? urls->rootdescURL : "") << ')';
 
         for (auto it = std::begin(mappings); it != std::end(mappings) && !shutdown_event->peek(); ++it) {
           if (map_upnp_port(data, urls, lan_addr_str, *it)) {

@@ -572,6 +572,33 @@ try {
     await page.waitForSelector('[data-remote-restart]');
     check('NET2 3c UPnP on PATCH + restart needed', JSON.stringify((await last()).lastPatch) === JSON.stringify({ upnp: 'enabled' }));
 
+    // S3 on step 5 (EA-NET2-V-01 B1 path): origin was wan, now lan + UPnP on -> "이전 값으로" for origin is blocked.
+    await step(page, '5');
+    check('NET2 step 5 origin back to wan is blocked while UPnP is on (reason shown)', (await page.isDisabled('[data-revert="origin_web_ui_allowed"]')) && (await page.isVisible('#reason-revert-origin_web_ui_allowed')));
+    check('NET2 step 5 blocked revert points to its reason', (await page.getAttribute('[data-revert="origin_web_ui_allowed"]', 'aria-describedby')) === 'reason-revert-origin_web_ui_allowed');
+    check('NET2 step 5 UPnP revert (to off) stays usable', !(await page.isDisabled('[data-revert="upnp"]')));
+    await page.screenshot({ path: join(out, 'NET2-step5-revert-blocked-light.png'), fullPage: true });
+    results.shots.push({ name: 'NET2-step5-revert-blocked-light', path: '/arbs/remote?step=5', file: 'NET2-step5-revert-blocked-light.png' });
+    const beforeRevert = (await last()).patches?.length ?? 0;
+    await page.click('[data-revert="origin_web_ui_allowed"]', { force: true }).catch(() => undefined);
+    await page.waitForTimeout(200);
+    check('NET2 step 5 blocked revert sends nothing', ((await last()).patches?.length ?? 0) === beforeRevert);
+    await page.click('[data-revert="upnp"]');
+    await page.waitForTimeout(400);
+    check('NET2 step 5 UPnP back to its value before (no line)', JSON.stringify((await last()).lastPatch) === JSON.stringify({ upnp: '' }));
+    check('NET2 step 5 origin revert usable once UPnP is off', !(await page.isDisabled('[data-revert="origin_web_ui_allowed"]')) && !(await page.isVisible('#reason-revert-origin_web_ui_allowed')));
+    // Other direction: UPnP back to on while origin = wan.
+    await mock({ reset: true, config: { origin_web_ui_allowed: 'wan', upnp: 'disabled' } });
+    const savedChanges = await page.evaluate(() => sessionStorage.getItem('arbs.remote.changes'));
+    await page.evaluate(() => sessionStorage.setItem('arbs.remote.changes', JSON.stringify([{ key: 'upnp', before: 'enabled', after: 'disabled' }])));
+    await step(page, '5');
+    check('NET2 step 5 UPnP back to on is blocked while origin = wan (reason shown)', (await page.isDisabled('[data-revert="upnp"]')) && (await page.isVisible('#reason-revert-upnp')));
+    const beforeUpnp = (await last()).patches?.length ?? 0;
+    await page.click('[data-revert="upnp"]', { force: true }).catch(() => undefined);
+    await page.waitForTimeout(200);
+    check('NET2 step 5 blocked UPnP revert sends nothing', ((await last()).patches?.length ?? 0) === beforeUpnp);
+    await page.evaluate((text) => sessionStorage.setItem('arbs.remote.changes', text ?? '[]'), savedChanges);
+
     await mock({ reset: true, net: { port: 47989 } });
     await step(page, '3d');
     check('NET2 3d benefit line', (await page.textContent('[data-port-benefit]')).includes('Vibepollo·Apollo'));

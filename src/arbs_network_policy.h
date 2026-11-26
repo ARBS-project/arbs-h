@@ -259,6 +259,36 @@ namespace arbs::netpolicy {
     return out;
   }
 
+  /**
+   * P6 for the UPnP debug lines: the kind of the host in a device URL ("http://host:port/path"), never the
+   * host itself. IPv4 = its kind (private_v4, ...), "[...]" = ipv6, a name = name, empty or unreadable = unknown.
+   */
+  inline std::string_view url_host_kind(std::string_view url) {
+    const auto scheme = url.find("://");
+    if (scheme == std::string_view::npos) {
+      return "unknown";
+    }
+    auto host = url.substr(scheme + 3);
+    host = host.substr(0, host.find_first_of("/?#"));
+    if (const auto at = host.rfind('@'); at != std::string_view::npos) {
+      host = host.substr(at + 1);
+    }
+    if (host.empty()) {
+      return "unknown";
+    }
+    if (host.front() == '[') {
+      return host.find(']') == std::string_view::npos ? "unknown" : "ipv6";
+    }
+    host = host.substr(0, host.find(':'));
+    if (host.empty()) {
+      return "unknown";
+    }
+    if (const auto bytes = parse_v4(host)) {
+      return to_string(kind_of_v4(*bytes));
+    }
+    return host.find_first_not_of("0123456789.") == std::string_view::npos ? "unknown" : "name";
+  }
+
   /// One address of this PC for the diagnostics list. No adapter name is kept.
   struct interface_t {
     addr_kind_e kind;

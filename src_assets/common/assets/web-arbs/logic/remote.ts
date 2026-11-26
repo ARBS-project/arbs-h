@@ -348,13 +348,44 @@ const VALUES: Record<WizardKey, readonly string[]> = {
 };
 
 /**
+ * S3 for "이전 값으로": the settings after writing `value` back to `key` ('' = no line = server default).
+ * Returns the reason when the result would be UPnP on + management page allowed from the internet (origin = wan),
+ * in both directions (origin back to wan while UPnP is on, UPnP back on while origin is wan). `originWanNow` is the
+ * running server's origin (diagnostics), counted too when the key is not origin itself. Other keys are never blocked.
+ */
+export function restoreBlockReason(
+  key: string,
+  value: string,
+  current: Record<string, unknown>,
+  originWanNow = false,
+): string | null {
+  if (key !== 'upnp' && key !== 'origin_web_ui_allowed') return null; // other keys never make this combination
+  const next: Record<string, unknown> = { ...current };
+  if (value === '') delete next[key];
+  else next[key] = value;
+  const wan = originOf(next) === 'wan' || (key !== 'origin_web_ui_allowed' && originWanNow);
+  if (!wan || !serverBool(next.upnp, false)) return null;
+  return key === 'upnp' ? 'remote.revert_blocked_upnp' : 'remote.revert_blocked_origin';
+}
+
+/**
  * PATCH /api/config body for one wizard change. Throws for a key outside WIZARD_KEYS or a value the wizard does not
  * offer. restore = "이전 값으로": the value recorded before the change is written back as is ('' removes the key,
- * i.e. the server default).
+ * i.e. the server default), but only with the current settings and never into UPnP on + origin = wan (S3).
  */
-export function wizardPatch(key: string, value: string, restore = false): Record<string, string> {
+export function wizardPatch(
+  key: string,
+  value: string,
+  restore = false,
+  current?: Record<string, unknown>,
+  originWanNow = false,
+): Record<string, string> {
   if (!isWizardKey(key)) throw new Error(`not a wizard key: ${key}`);
-  if (restore) return { [key]: value };
+  if (restore) {
+    if (!current) throw new Error('restore needs the current settings');
+    if (restoreBlockReason(key, value, current, originWanNow)) throw new Error('restore blocked: UPnP with origin wan');
+    return { [key]: value };
+  }
   if (key === 'port') {
     const check = checkPort(value, -1);
     if (check.error) throw new Error(`bad port: ${check.error}`);

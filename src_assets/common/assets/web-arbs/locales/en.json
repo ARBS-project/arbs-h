@@ -361,6 +361,8 @@
     "restart_now": "Restart now",
     "before_value": "Value before: {value}",
     "revert": "Previous value",
+    "revert_blocked_origin": "UPnP is on, so the management page cannot go back to being allowed from the internet. First turn UPnP off or put it back to its previous value.",
+    "revert_blocked_upnp": "The management page is allowed from the internet, so UPnP cannot go back to on. First allow the management page at home only.",
     "s4_title": "Try it from outside",
     "s4_1": "Turn off Wi-Fi on your phone and connect to this PC in Moonlight over mobile data.",
     "s4_q": "How did it go?",
