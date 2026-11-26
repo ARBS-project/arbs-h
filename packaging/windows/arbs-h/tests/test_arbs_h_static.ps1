@@ -279,7 +279,7 @@ foreach ($e in $s13) {
   Ok ($t -match $e.P) "S13 $($e.F): $($e.N)"
 }
 $upnpText = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\upnp.cpp'))
-Ok (-not $upnpText.Contains('Configuration API') -and -not $upnpText.Contains('origin_web_ui_allowed')) 'S13 upnp.cpp maps no web UI port (no "Configuration API", no origin check)'
+Ok (-not $upnpText.Contains('Configuration API') -and -not $upnpText.Contains('nvhttp.origin_web_ui_allowed') -and -not $upnpText.Contains('confighttp::PORT_HTTPS))')) 'S13 upnp.cpp maps no web UI port (no "Configuration API", no origin check, no web UI port mapping)'
 Ok ($upnpText.Contains('arbs::netpolicy::upnp_mappings(config::sunshine.port)')) 'S13 upnp.cpp takes its list from upnp_mappings'
 $chText = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\confighttp.cpp'))
 $diag = $chText.Substring($chText.IndexOf('void getNetworkDiagnostics('))
