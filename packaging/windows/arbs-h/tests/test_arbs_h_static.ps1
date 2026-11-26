@@ -11,9 +11,9 @@ param(
   [Parameter(Mandatory = $true)][string]$StageDir,
   [Parameter(Mandatory = $true)][string]$SetupExe,
   [string]$UninstallKeysFile = '',
-  [string]$Version = '0.2.0',
-  # H013 S11: commit the changes of this release start from (UI1b 0.2.0: v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
-  [string]$BaseCommit = '9bf60beb91994aae7af714d29f33ef6d76bfab11'
+  [string]$Version = '0.2.1',
+  # H013 S11: commit the changes of this release start from (H021 0.2.1: v0.2.0 = 5472d513a; UI1b used v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
+  [string]$BaseCommit = '5472d513a4d9c4e0abcf9b3c33ff5be0eacd5526'
 )
 $ErrorActionPreference = 'Stop'
 $pkg = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
