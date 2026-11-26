@@ -112,12 +112,14 @@ code {
 .nav__group + .nav__group {
   margin-top: 1rem;
 }
-/* H021: group titles are headings, not menu items: small, muted (AA kept: same --arbs-muted,
-   no opacity), no pointer, no hover/selection. Items are indented under them. */
+/* H021/H022: group titles are headings, not menu items: small, bold, primary orange
+   (--arbs-primary: light #c2410c, dark #f97316; AA >= 4.5 on bg and drawer surface, no opacity),
+   no pointer, no hover/selection. Items are indented under them; the current item keeps
+   bar + tint + bold 700 so it does not look like a title. */
 .nav__label {
   margin: 0 0 0.2rem;
   padding: 0 0.6rem;
-  color: var(--arbs-muted);
+  color: var(--arbs-primary);
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.02em;

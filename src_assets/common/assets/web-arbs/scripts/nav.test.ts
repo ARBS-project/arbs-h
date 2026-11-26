@@ -54,14 +54,25 @@ test('styles: title has no pointer and no hover rule; items are indented and kee
   const css = readFileSync(join(root, 'styles/base.css'), 'utf8');
   const label = /\.nav__label \{([^}]*)\}/.exec(css)![1]!;
   assert.match(label, /cursor: default/);
-  assert.match(label, /color: var\(--arbs-muted\)/);
+  // Titles use the primary orange token (light #c2410c / dark #f97316), not a fixed colour.
+  assert.match(label, /color: var\(--arbs-primary\)/);
+  assert.match(label, /font-weight: 600/);
+  assert.match(label, /font-size: 0\.75rem/);
+  assert.match(label, /user-select: none/);
   assert.doesNotMatch(label, /opacity/);
+  assert.doesNotMatch(label, /#[0-9a-fA-F]{3,6}/);
   assert.doesNotMatch(css, /\.nav__label:hover/);
   const link = /\.nav__link \{([^}]*)\}/.exec(css)![1]!;
   const left = /padding: [\d.]+rem [\d.]+rem [\d.]+rem ([\d.]+)rem/.exec(link);
   assert.ok(left && Number(left[1]) >= 1, 'item indented by at least 1rem');
+  // Plain items keep the default text colour.
+  assert.match(link, /color: var\(--arbs-text\)/);
   assert.match(css, /\.nav__link:hover \{/);
-  assert.match(css, /\.nav__link--current \{/);
+  // The current item keeps bar + tint + bold so it differs from an orange title.
+  const current = /\.nav__link--current \{([^}]*)\}/.exec(css)![1]!;
+  assert.match(current, /border-left-color: var\(--arbs-tint-bar\)/);
+  assert.match(current, /background: var\(--arbs-primary-tint\)/);
+  assert.match(current, /font-weight: 700/);
 });
 
 test('current page match (exact for "/", prefix for the others)', () => {

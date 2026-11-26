@@ -437,7 +437,7 @@
     "history_enabled": "Keep session history",
     "history_enabled_help": "When off, recent sessions and detailed numbers are not saved. On by default.",
     "history_ttl": "Days to keep history",
-    "history_ttl_help": "History older than this many days is deleted. 0 = never delete (default)."
+    "history_ttl_help": "History older than this many days is deleted. 0 = never delete. Default 30 days."
   },
   "trouble": {
     "lead": "End a stuck app, restart ARBS-H, or read the logs.",

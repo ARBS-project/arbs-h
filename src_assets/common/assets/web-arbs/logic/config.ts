@@ -107,7 +107,7 @@ export const DEFAULTS: ArbsSettings = {
   dd_resolution_option: 'auto',
   arbs_webui_default: 'arbs',
   session_history_enabled: true,
-  session_history_ttl_days: 0,
+  session_history_ttl_days: 30,
 };
 
 /** Keys whose change needs an ARBS-H restart (or a controller reconnect) to take effect. */

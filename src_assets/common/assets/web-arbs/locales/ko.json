@@ -437,7 +437,7 @@
     "history_enabled": "세션 기록 저장",
     "history_enabled_help": "끄면 최근 세션과 자세한 숫자가 저장되지 않습니다. 기본은 켜짐입니다.",
     "history_ttl": "기록 보관 일수",
-    "history_ttl_help": "이 일수보다 오래된 기록을 지웁니다. 0 = 지우지 않음(기본)."
+    "history_ttl_help": "이 일수보다 오래된 기록을 지웁니다. 0 = 지우지 않음. 기본 30일."
   },
   "trouble": {
     "lead": "멈춘 앱을 끝내거나, ARBS-H를 다시 시작하거나, 로그를 봅니다.",

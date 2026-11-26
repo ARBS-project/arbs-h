@@ -94,7 +94,7 @@ function restorable(apps) {
 }
 
 const LOG = [
-  '[2026-11-25 10:00:00.001]: Info: ARBS-H 0.2.1 (based on Vibepollo 2.18.9)',
+  '[2026-11-25 10:00:00.001]: Info: ARBS-H 0.2.2 (based on Vibepollo 2.18.9)',
   '[2026-11-25 10:00:00.120]: Info: Gamepad: usbip_ds5 (DualSense)',
   '[2026-11-25 10:00:01.500]: Warning: Display helper: snapshot missing',
   '[2026-11-25 10:00:02.010]: Info: Configuration UI available at [https://localhost:47990]',
@@ -182,7 +182,7 @@ const server = createServer(async (req, res) => {
   if (p === '/api/metadata')
     return json(res, {
       status: true,
-      version: '0.2.1',
+      version: '0.2.2',
       platform: 'windows',
       architecture: 'x86_64',
       branch: 'arbs-h',
@@ -238,7 +238,7 @@ const server = createServer(async (req, res) => {
     if (!summary) return json(res, { status: false }, 404);
     return json(res, { ...summary, samples: samples(uuid), events: [], total_samples: 6, history_status: { available: true } });
   }
-  if (p === '/api/config' && m === 'GET') return json(res, { status: true, platform: 'windows', version: '0.2.1', ...state.config });
+  if (p === '/api/config' && m === 'GET') return json(res, { status: true, platform: 'windows', version: '0.2.2', ...state.config });
   if (p === '/api/config' && m === 'PATCH') {
     const patch = await body(req);
     state.config = { ...state.config, ...patch };

@@ -1138,7 +1138,7 @@ namespace config {
     0,  // update_check_interval_seconds: ARBS-H development build default off (code kept)
 #endif
     true,  // session_history_enabled
-    0,  // session_history_ttl_days (disabled by default)
+    30,  // session_history_ttl_days (ARBS-H H022: 30 days by default; 0 disables age pruning)
     0  // session_history_db_size_limit_mb (disabled by default)
   };
 

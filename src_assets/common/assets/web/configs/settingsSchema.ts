@@ -1281,7 +1281,7 @@ export const settingsDefaults: Record<string, unknown> = {
   min_log_level: 2,
   global_prep_cmd: [],
   session_history_enabled: true,
-  session_history_ttl_days: 0,
+  session_history_ttl_days: 30,
   session_history_db_size_limit_mb: 0,
   hardware_metrics: false,
   hardware_metrics_interval: 1000,

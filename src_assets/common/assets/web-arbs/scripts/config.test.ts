@@ -130,14 +130,22 @@ test('H021 trigger status: h2b only, plus the current value when it is enabled o
 test('H021 history settings (H-SET-173/174): defaults, reading, PATCH values', () => {
   const s = readSettings({});
   assert.equal(s.session_history_enabled, true);
-  assert.equal(s.session_history_ttl_days, 0);
+  // H022: no key in the config file = server default 30 days.
+  assert.equal(s.session_history_ttl_days, 30);
+  assert.equal(readSettings({ session_history_ttl_days: '' }).session_history_ttl_days, 30);
   assert.equal(readSettings({ session_history_enabled: 'disabled' }).session_history_enabled, false);
   assert.equal(readSettings({ session_history_ttl_days: '30' }).session_history_ttl_days, 30);
+  // A value already written in the config file is shown as is (0 stays 0).
+  assert.equal(readSettings({ session_history_ttl_days: '0' }).session_history_ttl_days, 0);
+  assert.equal(readSettings({ session_history_ttl_days: '7' }).session_history_ttl_days, 7);
   assert.equal(clampDays('-3'), 0);
   assert.equal(clampDays('7.8'), 7);
   assert.equal(clampDays('x'), 0);
   assert.equal(serialize('session_history_enabled', false), 'disabled');
   assert.equal(serialize('session_history_ttl_days', 14), '14');
-  assert.deepEqual(patchBody(s, { ...s, session_history_ttl_days: 30 }), { session_history_ttl_days: '30' });
+  assert.deepEqual(patchBody(s, { ...s, session_history_ttl_days: 14 }), { session_history_ttl_days: '14' });
+  // Choosing 0 from the default 30 is written explicitly (not dropped as "default").
+  assert.deepEqual(patchBody(s, { ...s, session_history_ttl_days: 0 }), { session_history_ttl_days: '0' });
+  assert.deepEqual(patchBody(s, { ...s }), {});
   assert.equal(needsRestart(['session_history_enabled', 'session_history_ttl_days']), false);
 });

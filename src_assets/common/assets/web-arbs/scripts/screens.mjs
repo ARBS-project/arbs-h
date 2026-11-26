@@ -2,6 +2,7 @@
 // and a few behaviour checks, against scripts/mock-server.mjs. Uses an installed Chrome/Edge
 // (no browser download): set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH.
 // H021: sidebar headings, gamepad list / hidden value / trigger states, default apps, statistics.
+// H022: orange group titles (wide page + narrow drawer), history days default 30.
 // Usage: node scripts/screens.mjs --base http://127.0.0.1:5180 --out <dir>
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -31,6 +32,16 @@ function check(name, pass, detail = '') {
 }
 
 const releases = [
+  {
+    tag_name: 'v0.2.2',
+    name: 'ARBS-H 0.2.2',
+    draft: false,
+    prerelease: false,
+    html_url: 'https://github.com/arbs-project/arbs-h/releases/tag/v0.2.2',
+    body: 'mock',
+    published_at: '2026-11-27T00:00:00Z',
+    assets: [{ name: 'arbs-h-0.2.2-setup.exe', state: 'uploaded', size: 1000 }],
+  },
   {
     tag_name: 'v0.2.1',
     name: 'ARBS-H 0.2.1',
@@ -290,6 +301,104 @@ try {
     check(`${theme}: stats detail rows`, (await page.$$('[data-stats-detail] .stats__row')).length === 7);
     check(`${theme}: encode latency label (not network)`, (await page.textContent('[data-live-source="history"] [data-metric="latency"] dt'))?.trim() === '인코딩 지연');
     check(`${theme}: round-trip note`, await page.isVisible('[data-rtt-note]'));
+    await ctx.close();
+  }
+
+  // H022: orange group titles (light #c2410c / dark #f97316), current item bold, history days 30.
+  const H022_TITLE = { light: 'rgb(194, 65, 12)', dark: 'rgb(249, 115, 22)' };
+  const H022_TTL_HELP = '이 일수보다 오래된 기록을 지웁니다. 0 = 지우지 않음. 기본 30일.';
+  results.h022 = {};
+  for (const theme of ['light', 'dark']) {
+    const info = {};
+    // Wide page: the menu has no background of its own (page background).
+    await mock({ reset: true });
+    let ctx = await context(browser, theme);
+    let page = await ctx.newPage();
+    await shot(page, `H022-sidebar-${theme}`, '/arbs/stats');
+    await page.locator('#arbs-nav').screenshot({ path: join(out, `H022-sidebar-only-${theme}.png`) });
+    results.shots.push({ name: `H022-sidebar-only-${theme}`, path: '/arbs/stats', file: `H022-sidebar-only-${theme}.png` });
+    info.wide = await page.evaluate(() => {
+      const cs = (el) => getComputedStyle(el);
+      const labels = [...document.querySelectorAll('#arbs-nav .nav__label')].map((h) => ({
+        color: cs(h).color,
+        weight: cs(h).fontWeight,
+        size: cs(h).fontSize,
+        opacity: cs(h).opacity,
+      }));
+      const nav = document.querySelector('.nav');
+      const cur = document.querySelector('.nav__link--current');
+      const plain = document.querySelector('.nav__link:not(.nav__link--current)');
+      return {
+        labels,
+        navBg: cs(nav).backgroundColor,
+        bodyBg: cs(document.body).backgroundColor,
+        bodyText: cs(document.body).color,
+        current: { color: cs(cur).color, bg: cs(cur).backgroundColor, weight: cs(cur).fontWeight, bar: cs(cur).borderLeftColor },
+        plain: { color: cs(plain).color, weight: cs(plain).fontWeight },
+      };
+    });
+    const w = info.wide;
+    const wideBg = w.navBg === 'rgba(0, 0, 0, 0)' ? w.bodyBg : w.navBg;
+    check(`H022 ${theme}: 4 titles orange ${H022_TITLE[theme]}`, w.labels.length === 4 && w.labels.every((l) => l.color === H022_TITLE[theme]), JSON.stringify(w.labels.map((l) => l.color)));
+    check(`H022 ${theme}: titles 600 weight, 12px or less, no opacity`, w.labels.every((l) => l.weight === '600' && parseFloat(l.size) <= 12 && l.opacity === '1'), JSON.stringify(w.labels[0]));
+    check(`H022 ${theme}: plain item = body text colour`, w.plain.color === w.bodyText, `${w.plain.color} / ${w.bodyText}`);
+    check(`H022 ${theme}: current item bold 700`, w.current.weight === '700', w.current.weight);
+    info.ratioWide = ratio(parse(w.labels[0].color), parse(wideBg));
+    info.ratioCurrent = ratio(parse(w.current.color), parse(w.current.bg));
+    check(`H022 ${theme}: contrast title / menu (wide) >= 4.5`, info.ratioWide >= 4.5, String(info.ratioWide));
+    check(`H022 ${theme}: contrast current item / tint >= 4.5`, info.ratioCurrent >= 4.5, String(info.ratioCurrent));
+
+    // History settings: no key in the config file = 30, help text, 0 is written explicitly.
+    await shot(page, `H022-stats-history-settings-${theme}`, '/arbs/stats', (p) => p.locator('details[data-advanced]').evaluate((d) => (d.open = true)));
+    info.ttlValue = await page.inputValue('[data-setting="session_history_ttl_days"]');
+    info.ttlHelp = (await page.textContent('#help-history-ttl'))?.trim();
+    check(`H022 ${theme}: history days shows 30 when the key is missing`, info.ttlValue === '30', info.ttlValue);
+    check(`H022 ${theme}: history days help text`, info.ttlHelp === H022_TTL_HELP, info.ttlHelp);
+    await ctx.close();
+
+    // Narrow width: the menu opens as a drawer on the surface colour.
+    await mock({ reset: true });
+    ctx = await context(browser, theme, { width: 390, height: 844 });
+    page = await ctx.newPage();
+    await shot(page, `H022-drawer-390-${theme}`, '/arbs/stats', (p) => p.click('.topbar__menu'));
+    info.drawer = await page.evaluate(() => {
+      const cs = (el) => getComputedStyle(el);
+      return {
+        label: cs(document.querySelector('#arbs-nav .nav__label')).color,
+        navBg: cs(document.querySelector('.nav')).backgroundColor,
+        surface: getComputedStyle(document.documentElement).getPropertyValue('--arbs-surface').trim(),
+        display: cs(document.querySelector('.nav')).display,
+      };
+    });
+    info.ratioDrawer = ratio(parse(info.drawer.label), parse(info.drawer.navBg));
+    check(`H022 ${theme}: drawer open`, info.drawer.display !== 'none', info.drawer.display);
+    check(`H022 ${theme}: contrast title / drawer surface >= 4.5`, info.ratioDrawer >= 4.5, `${info.ratioDrawer} on ${info.drawer.navBg}`);
+    await ctx.close();
+    results.h022[theme] = info;
+  }
+  {
+    // A value already in the config file (0) is shown as is; choosing 0 from 30 is sent as '0'.
+    await mock({ reset: true, config: { session_history_ttl_days: '0' } });
+    let ctx = await context(browser, 'light');
+    let page = await ctx.newPage();
+    await page.goto(`${base}/arbs/stats`);
+    await page.waitForSelector('.page');
+    await page.waitForTimeout(300);
+    check('H022: history days keeps a saved 0', (await page.inputValue('[data-setting="session_history_ttl_days"]')) === '0');
+    await ctx.close();
+    await mock({ reset: true });
+    ctx = await context(browser, 'light');
+    page = await ctx.newPage();
+    await page.goto(`${base}/arbs/stats`);
+    await page.waitForSelector('.page');
+    await page.waitForTimeout(300);
+    await page.locator('details[data-advanced]').evaluate((d) => (d.open = true));
+    await page.fill('[data-setting="session_history_ttl_days"]', '0');
+    await page.dispatchEvent('[data-setting="session_history_ttl_days"]', 'change');
+    await page.click('[data-save]');
+    await page.waitForTimeout(400);
+    const state = await last();
+    check('H022: PATCH 30 -> 0 writes session_history_ttl_days "0"', JSON.stringify(state.lastPatch) === JSON.stringify({ session_history_ttl_days: '0' }), JSON.stringify(state.lastPatch));
     await ctx.close();
   }
 

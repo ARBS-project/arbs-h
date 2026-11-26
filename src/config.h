@@ -536,7 +536,7 @@ namespace config {
     // ARBS-H development build: default 0 (off); the update check code is kept.
     int update_check_interval_seconds {0};
     bool session_history_enabled {true};  ///< Persist stream/session history to SQLite
-    int session_history_ttl_days {0};  ///< Delete ended sessions older than this many days (0 disables age pruning)
+    int session_history_ttl_days {30};  ///< Delete ended sessions older than this many days (0 disables age pruning; ARBS-H default 30)
     int session_history_db_size_limit_mb {0};  ///< Approximate live DB quota in MiB (0 disables size pruning)
     std::vector<std::string> csrf_allowed_origins;
     bool hardware_metrics {false};  ///< Allow paired streaming clients to request hardware metrics

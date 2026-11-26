@@ -83,7 +83,7 @@ const defaultGroups = [
     name: 'Stats',
     options: {
       session_history_enabled: 'enabled',
-      session_history_ttl_days: 0,
+      session_history_ttl_days: 30,
       session_history_db_size_limit_mb: 0,
       system_tray: true,
       hide_tray_controls: 'disabled',

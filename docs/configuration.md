@@ -5484,7 +5484,7 @@ Enables persistent session-history recording.
 
 ### session_history_ttl_days
 
-Sets the number of days to retain session-history records. Set `0` to retain records until another configured limit removes them.
+Sets the number of days to retain session-history records. Set `0` to retain records until another configured limit removes them. ARBS-H default: `30`.
 
 ### session_history_db_size_limit_mb
 

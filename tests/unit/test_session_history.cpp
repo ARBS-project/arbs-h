@@ -255,6 +255,8 @@ TEST(SessionHistoryPolicy, QueuePressureAndLifecycleBarriersAreDeterministic) {
 TEST(SessionHistoryPolicy, RetentionUsesInjectedClock) {
   EXPECT_DOUBLE_EQ(session_history::policy::retention_cutoff_unix(1, 200000.0), 113600.0);
   EXPECT_DOUBLE_EQ(session_history::policy::retention_cutoff_unix(0, 200000.0), 0.0);
+  // ARBS-H default 30 days: cutoff = now - 30 * 86400.
+  EXPECT_DOUBLE_EQ(session_history::policy::retention_cutoff_unix(30, 3000000.0), 408000.0);
 }
 
 TEST(SessionHistoryStorage, FreshSchemaHasCurrentVersionAndCascadeConstraints) {
