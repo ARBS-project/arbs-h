@@ -8,6 +8,7 @@
 #include <miniupnpc/miniupnpc.h>
 
 // local includes
+#include "arbs_network_policy.h"
 #include "platform/common.h"
 
 /**
@@ -60,6 +61,8 @@ namespace upnp {
    * @param urls The URLs.
    * @param data The IGD data.
    * @param lan_addr The LAN address.
+   * @param wan_addr ARBS-H 0.3.0 (S2): optional buffer for the external address (MiniUPnPc >= 2.2.8 only).
+   *        The caller only classifies it (arbs::netpolicy::wan_kind_of) and never logs or keeps it.
    * @return The IGD status as an igd_status_e value, converted from the raw UPNP_GetValidIGD() result.
    * @retval igd_status_e::none No IGD found.
    * @retval igd_status_e::connected A valid connected IGD has been found.
@@ -67,7 +70,13 @@ namespace upnp {
    * @retval igd_status_e::disconnected A valid IGD has been found but it reported as not connected.
    * @retval igd_status_e::unknown_device An UPnP device has been found but was not recognized as an IGD.
    */
-  igd_status_e UPNP_GetValidIGDStatus(device_t &device, urls_t *urls, IGDdatas *data, std::array<char, INET6_ADDRESS_STRLEN> &lan_addr);
+  igd_status_e UPNP_GetValidIGDStatus(device_t &device, urls_t *urls, IGDdatas *data, std::array<char, INET6_ADDRESS_STRLEN> &lan_addr, std::array<char, INET6_ADDRESS_STRLEN> *wan_addr = nullptr);
 
   [[nodiscard]] std::unique_ptr<platf::deinit_t> start();
+
+  /**
+   * @brief ARBS-H 0.3.0 (S2): last UPnP result (IGD state, mapped count, IPv6 pinholes, WAN address kind).
+   * @details Kinds and counts only: no address is kept. igd = not_run until the UPnP thread has run once.
+   */
+  [[nodiscard]] arbs::netpolicy::upnp_status_t last_status();
 }  // namespace upnp

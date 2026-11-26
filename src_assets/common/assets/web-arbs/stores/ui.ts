@@ -26,6 +26,9 @@ export const useUiStore = defineStore('ui', () => {
   const notice = ref('');
   const noticeTone = ref<'info' | 'error'>('info');
   const navOpen = ref(false);
+  /** NET2: web UI address after a port change (shown on the offline cover while ARBS-H restarts). */
+  const movedTo = ref('');
+  const movedPort = ref(0);
   let noticeTimer: number | undefined;
 
   function applyTheme(): void {
@@ -57,5 +60,5 @@ export const useUiStore = defineStore('ui', () => {
     /* old browser */
   }
 
-  return { theme, resolved, notice, noticeTone, navOpen, applyTheme, setTheme, say };
+  return { theme, resolved, notice, noticeTone, navOpen, movedTo, movedPort, applyTheme, setTheme, say };
 });

@@ -3,6 +3,7 @@
 // (no browser download): set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH.
 // H021: sidebar headings, gamepad list / hidden value / trigger states, default apps, statistics.
 // H022: orange group titles (wide page + narrow drawer), history days default 30.
+// NET2 (0.3.0): remote access wizard (all steps light/dark, 390 px), hiding, blocks, port change, drawer + save bar.
 // Usage: node scripts/screens.mjs --base http://127.0.0.1:5180 --out <dir>
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -32,6 +33,16 @@ function check(name, pass, detail = '') {
 }
 
 const releases = [
+  {
+    tag_name: 'v0.3.0',
+    name: 'ARBS-H 0.3.0',
+    draft: false,
+    prerelease: false,
+    html_url: 'https://github.com/arbs-project/arbs-h/releases/tag/v0.3.0',
+    body: 'mock',
+    published_at: '2026-11-28T00:00:00Z',
+    assets: [{ name: 'arbs-h-0.3.0-setup.exe', state: 'uploaded', size: 1000 }],
+  },
   {
     tag_name: 'v0.2.2',
     name: 'ARBS-H 0.2.2',
@@ -415,6 +426,259 @@ try {
     await shot(page, 'H-stats-rtsp-fallback-light', '/arbs/stats');
     check('stats RTSP fallback while history is off', await page.isVisible('[data-live-rtsp-note]'));
     check('stats history switch disabled while streaming', await page.isDisabled('[data-setting="session_history_enabled"]'));
+    await ctx.close();
+  }
+
+  // NET2 (0.3.0): "외부 접속" wizard. The mock's addresses are format examples (100.x.y.z, 192.168.x.y); every shot
+  // shows them hidden (●●●) except the one reveal shot, which shows only that example form.
+  const MASK = '●●●';
+  const NET2_STEPS = ['0', '1', '2', '3a', '3b', '3c', '3d', '4', '5'];
+  const WIZARD_KEYS = ['upnp', 'origin_web_ui_allowed', 'port', 'lan_encryption_mode', 'wan_encryption_mode', 'enable_pairing'];
+  results.net2 = {};
+  async function step(page, s, query = '') {
+    await page.goto(`${base}/arbs/remote?step=${s}${query}`);
+    await page.waitForSelector(`[data-remote-step="${s}"]`, { timeout: 15000 });
+    await page.waitForTimeout(250);
+  }
+  async function addressesMasked(page) {
+    const texts = await page.$$eval('[data-address]', (els) => els.map((e) => e.textContent.trim()));
+    return texts.every((t) => t.startsWith('●●●') && !/x\.y/.test(t));
+  }
+  for (const theme of ['light', 'dark']) {
+    const info = {};
+    await mock({ reset: true });
+    const ctx = await context(browser, theme);
+    const page = await ctx.newPage();
+    for (const s of NET2_STEPS) {
+      await shot(page, `NET2-step${s}-${theme}`, `/arbs/remote?step=${s}`, (p) => p.waitForSelector(`[data-remote-step="${s}"]`));
+      const never = await page.$$eval('[data-never]', (els) => els.map((e) => e.textContent.trim()));
+      check(`NET2 ${theme} step ${s}: red "never open" box (TCP 47990, USB/IP 3240)`, never.length === 2 && never[0].includes('TCP 47990') && never[1].includes('3240'), JSON.stringify(never));
+      check(`NET2 ${theme} step ${s}: addresses hidden`, await addressesMasked(page));
+    }
+    await step(page, '3a');
+    info.colors = await page.evaluate(() => {
+      const cs = (el) => getComputedStyle(el);
+      const cur = document.querySelector('.remote__step[aria-current="step"]');
+      const banner = document.querySelector('[data-never-open]');
+      const never = document.querySelector('[data-never]');
+      const text = document.querySelector('.diagram__text');
+      const sub = document.querySelector('.diagram__sub');
+      const box = document.querySelector('.diagram__box');
+      const code = document.querySelector('[data-address]');
+      const step = document.querySelector('.remote__step:not([aria-current])');
+      return {
+        current: [cs(cur).color, cs(cur).backgroundColor],
+        step: [cs(step).color, cs(step).backgroundColor],
+        never: [cs(never).color, cs(banner).backgroundColor],
+        neverHelp: [cs(banner.querySelector('.muted')).color, cs(banner).backgroundColor],
+        diagramText: [cs(text).fill, cs(box).fill],
+        diagramSub: [cs(sub).fill, cs(box).fill],
+        address: [cs(code).color, cs(code).backgroundColor],
+      };
+    });
+    info.contrast = Object.fromEntries(Object.entries(info.colors).map(([k, [fg, bg]]) => [k, ratio(parse(fg), parse(bg))]));
+    for (const [k, v] of Object.entries(info.contrast)) check(`NET2 ${theme}: contrast ${k} >= 4.5`, v >= 4.5, String(v));
+    await step(page, '1');
+    info.grades = await page.evaluate(() => {
+      const card = getComputedStyle(document.querySelector('[data-remote-step="1"]')).backgroundColor;
+      return [...document.querySelectorAll('[data-remote-step="1"] .grade')].map((g) => [g.dataset.grade, getComputedStyle(g).color, card]);
+    });
+    for (const [g, fg, bg] of info.grades) check(`NET2 ${theme}: grade ${g} / card >= 4.5`, ratio(parse(fg), parse(bg)) >= 4.5, String(ratio(parse(fg), parse(bg))));
+    await ctx.close();
+    results.net2[theme] = info;
+  }
+
+  {
+    // Behaviour (light).
+    await mock({ reset: true });
+    const ctx = await context(browser, 'light');
+    const page = await ctx.newPage();
+    const navHref = await page.goto(`${base}/arbs/`).then(() => page.waitForSelector('.page')).then(() =>
+      page.$$eval('#arbs-nav [role="group"]', (gs) => gs.map((g) => [...g.querySelectorAll('a')].map((a) => a.getAttribute('href')))),
+    );
+    check('NET2 menu: 외부 접속 in the connect group', JSON.stringify(navHref[1]) === JSON.stringify(['/arbs/devices', '/arbs/apps', '/arbs/remote']), JSON.stringify(navHref[1]));
+
+    await step(page, '1');
+    const grades = await page.$$eval('[data-check]', (els) => Object.fromEntries(els.map((e) => [e.dataset.check, e.dataset.checkGrade])));
+    check('NET2 step 1 default port: listeners ok, risk ok, overlap warn', grades.listeners === 'good' && grades.risk === 'good' && grades.overlap === 'warn', JSON.stringify(grades));
+    check('NET2 step 1 overlap row links to "포트 바꾸기"', await page.isVisible('[data-go-3d]'));
+    await mock({ net: { fail: true } });
+    await step(page, '1');
+    check('NET2 step 1 falls back to /api/config when the diagnostics API fails', await page.isVisible('[data-diag-fallback]'));
+    await mock({ net: { fail: false } });
+
+    await step(page, '2');
+    check('NET2 step 2 default (not sure) = Tailscale', (await page.getAttribute('[data-recommend]', 'data-recommend')) === 'tailscale' && (await page.isVisible('[data-note="unknown_means_tailscale"]')));
+    await page.check('[data-answer-router="yes"]');
+    await page.check('[data-answer-wan="yes"]');
+    check('NET2 step 2 yes + yes = port forwarding possible', (await page.getAttribute('[data-recommend]', 'data-recommend')) === 'forward');
+    check('NET2 step 2 text names other VPNs (예: Tailscale, ZeroTier)', (await page.textContent('[data-remote-step="2"]')).includes('예: Tailscale, ZeroTier'));
+
+    await step(page, '3a');
+    check('NET2 3a default port: address hidden, no :port', (await page.textContent('[data-tailnet] [data-address]')).trim() === MASK);
+    await mock({ config: { port: '45989' } });
+    await step(page, '3a');
+    check('NET2 3a port 45989: hidden address + :45989', (await page.textContent('[data-tailnet] [data-address]')).trim() === `${MASK}:45989`);
+    check('NET2 3a port 45989: ":port" note shown', await page.isVisible('[data-port-suffix]'));
+    await page.dispatchEvent('[data-tailnet] [data-reveal]', 'pointerdown');
+    await page.waitForTimeout(100);
+    const shownText = (await page.textContent('[data-tailnet] [data-address]')).trim();
+    check('NET2 3a reveal while pressed shows the example form 100.x.y.z:45989', shownText === '100.x.y.z:45989', shownText);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: join(out, 'NET2-step3a-reveal-example-light.png'), fullPage: true });
+    results.shots.push({ name: 'NET2-step3a-reveal-example-light', path: '/arbs/remote?step=3a', file: 'NET2-step3a-reveal-example-light.png' });
+    await page.dispatchEvent('[data-tailnet] [data-reveal]', 'pointerup');
+    await page.waitForTimeout(100);
+    check('NET2 3a released: hidden again', (await page.textContent('[data-tailnet] [data-address]')).trim() === `${MASK}:45989`);
+    try {
+      await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+      await page.click('[data-copy]');
+      await page.waitForTimeout(200);
+      const clip = await page.evaluate(() => navigator.clipboard.readText());
+      check('NET2 3a copy works while hidden (example form)', clip === '100.x.y.z:45989', clip);
+    } catch (e) {
+      check('NET2 3a copy works while hidden (example form)', false, String(e).slice(0, 120));
+    }
+    await page.click('[data-action="lan-enc-on"]');
+    await page.waitForTimeout(300);
+    check('NET2 3a lan encryption 0 -> 1 PATCH', JSON.stringify((await last()).lastPatch) === JSON.stringify({ lan_encryption_mode: '1' }), JSON.stringify((await last()).lastPatch));
+
+    await mock({ reset: true });
+    await step(page, '3b');
+    const rows = await page.$$eval('[data-port-table] tbody tr', (trs) => trs.map((tr) => tr.dataset.row));
+    check('NET2 3b table = TCP 47984 47989 48010 + UDP 47998 47999 48000 (no 47990)', JSON.stringify(rows) === JSON.stringify(['tcp-47984', 'tcp-47989', 'tcp-48010', 'udp-47998', 'udp-47999', 'udp-48000']), JSON.stringify(rows));
+    check('NET2 3b local address hidden', (await page.textContent('[data-local] [data-address]')).trim() === MASK);
+    check('NET2 3b official router guides only (ASUS, TP-Link), STACKON hidden while empty', JSON.stringify(await page.$$eval('[data-guide]', (as) => as.map((a) => a.dataset.guide))) === '["asus","tplink"]');
+    await page.click('[data-action="pairing-off"]');
+    await page.waitForSelector('[data-action="pairing-on"]');
+    check('NET2 3b new pairing off PATCH + undo button', JSON.stringify((await last()).lastPatch) === JSON.stringify({ enable_pairing: 'disabled' }));
+
+    await mock({ reset: true, config: { origin_web_ui_allowed: 'wan' } });
+    await step(page, '1');
+    check('NET2 step 1 origin=wan: risk', (await page.getAttribute('[data-check="risk"]', 'data-check-grade')) === 'bad');
+    await step(page, '3c');
+    check('NET2 3c origin=wan: UPnP on is blocked with the reason', (await page.isDisabled('[data-action="upnp-on"]')) && (await page.isVisible('#reason-upnp')));
+    await page.screenshot({ path: join(out, 'NET2-step3c-blocked-wan-light.png'), fullPage: true });
+    results.shots.push({ name: 'NET2-step3c-blocked-wan-light', path: '/arbs/remote?step=3c', file: 'NET2-step3c-blocked-wan-light.png' });
+    const before = (await last()).patches?.length ?? 0;
+    await page.click('[data-action="upnp-on"]', { force: true }).catch(() => undefined);
+    await page.waitForTimeout(200);
+    check('NET2 3c blocked button sends nothing', ((await last()).patches?.length ?? 0) === before);
+    await page.click('[data-remote-step="3c"] [data-action="origin-lan"]');
+    await page.waitForTimeout(300);
+    check('NET2 3c "집 안에서만" PATCH origin_web_ui_allowed=lan', JSON.stringify((await last()).lastPatch) === JSON.stringify({ origin_web_ui_allowed: 'lan' }));
+    check('NET2 3c after lan: UPnP on usable', !(await page.isDisabled('[data-action="upnp-on"]')));
+    await page.click('[data-action="upnp-on"]');
+    await page.waitForSelector('[data-remote-restart]');
+    check('NET2 3c UPnP on PATCH + restart needed', JSON.stringify((await last()).lastPatch) === JSON.stringify({ upnp: 'enabled' }));
+
+    await mock({ reset: true, net: { port: 47989 } });
+    await step(page, '3d');
+    check('NET2 3d benefit line', (await page.textContent('[data-port-benefit]')).includes('Vibepollo·Apollo'));
+    await page.fill('[data-field="new-port"]', '1028');
+    check('NET2 3d 1028 blocked', (await page.isVisible('[data-port-error]')) && (await page.isDisabled('[data-action="port-save"]')));
+    await page.fill('[data-field="new-port"]', '47963');
+    check('NET2 3d 47963 overlaps the Sunshine family', await page.isVisible('[data-port-warning="overlaps_sunshine"]'));
+    await page.fill('[data-field="new-port"]', '49131');
+    check('NET2 3d 49131 dynamic range warning', await page.isVisible('[data-port-warning="dynamic_range"]'));
+    await page.click('[data-action="port-arbs"]');
+    check('NET2 3d "ARBS 권장 포트" fills 45989', (await page.inputValue('[data-field="new-port"]')) === '45989');
+    check('NET2 3d preview of 45989', (await page.textContent('[data-port-preview]')).replace(/\s+/g, ' ').trim() === 'TCP 45984, 45989, 46010 · UDP 45998, 45999, 46000');
+    check('NET2 3d value before shown', (await page.textContent('[data-port-before]')).includes('(없음 = 기본값)'));
+    await page.click('[data-action="port-save"]');
+    await page.waitForSelector('[data-moved]');
+    check('NET2 3d save PATCH port=45989', JSON.stringify((await last()).lastPatch) === JSON.stringify({ port: '45989' }));
+    const href = await page.getAttribute('[data-new-link]', 'href');
+    const linkText = (await page.textContent('[data-new-link]')).trim();
+    check('NET2 3d new link = web UI port 45990, back to step 5 with prev_port 47989', /^https:\/\/[^/]+:45990\/arbs\/remote\?step=5&prev_port=47989$/.test(href), href.replace(/\/\/[^/:]+/, '//<host>'));
+    check('NET2 3d new link text hides the host', linkText === `https://${MASK}:45990/arbs/remote`, linkText);
+    check('NET2 3d restart button after a port change', await page.isVisible('[data-action="remote-restart"]'));
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: join(out, 'NET2-step3d-saved-light.png'), fullPage: true });
+    results.shots.push({ name: 'NET2-step3d-saved-light', path: '/arbs/remote?step=3d', file: 'NET2-step3d-saved-light.png' });
+    await step(page, '5');
+    check('NET2 step 5 lists the port change (before = none)', (await page.textContent('[data-change="port"]')).includes('(없음 = 기본값)'));
+    await page.screenshot({ path: join(out, 'NET2-step5-changes-light.png'), fullPage: true });
+    results.shots.push({ name: 'NET2-step5-changes-light', path: '/arbs/remote?step=5', file: 'NET2-step5-changes-light.png' });
+    await page.click('[data-revert="port"]');
+    await page.waitForTimeout(400);
+    check('NET2 step 5 "이전 값으로" PATCH port="" (no line again)', JSON.stringify((await last()).lastPatch) === JSON.stringify({ port: '' }));
+    check('NET2 step 5 port row gone after the undo (other changes stay)', !(await page.isVisible('[data-change="port"]')) && (await page.isVisible('[data-change="enable_pairing"]')));
+    check('NET2 step 5 shows wan_encryption_mode 1 (D8, not changed)', (await page.textContent('[data-wan-enc]')).includes('1'));
+    const keys = [...new Set(((await last()).patches ?? []).flatMap((p) => Object.keys(p)))];
+    check('NET2 all wizard PATCHes use the 6 allowed keys only', keys.every((k) => WIZARD_KEYS.includes(k)), JSON.stringify(keys));
+    await ctx.close();
+
+    // After the restart on the new port: the page opens from the new link (fresh sessionStorage), prev_port carries the old port.
+    await mock({ reset: true, config: { port: '45989' } });
+    const ctx2 = await context(browser, 'light');
+    const page2 = await ctx2.newPage();
+    await step(page2, '5', '&prev_port=47989');
+    check('NET2 prev_port: step 5 shows port 47989 -> 45989 to undo', (await page2.textContent('[data-change="port"]')).includes('47989') && (await page2.textContent('[data-change="port"]')).includes('45989'));
+    await page2.screenshot({ path: join(out, 'NET2-step5-prev-port-light.png'), fullPage: true });
+    results.shots.push({ name: 'NET2-step5-prev-port-light', path: '/arbs/remote?step=5&prev_port=47989', file: 'NET2-step5-prev-port-light.png' });
+    await step(page2, '0');
+    check('NET2 step 0 with 45989: ARBS port family note', await page2.isVisible('[data-arbs-port-note]'));
+    await step(page2, '3b');
+    const rows2 = await page2.$$eval('[data-port-table] tbody tr', (trs) => trs.map((tr) => tr.dataset.row));
+    check('NET2 3b table follows the port (45989)', JSON.stringify(rows2) === JSON.stringify(['tcp-45984', 'tcp-45989', 'tcp-46010', 'udp-45998', 'udp-45999', 'udp-46000']), JSON.stringify(rows2));
+    check('NET2 never-open box follows the port (TCP 45990)', (await page2.textContent('[data-never="web_ui"]')).includes('TCP 45990'));
+    await ctx2.close();
+  }
+
+  // NET2 narrow (390 px): wizard pages and the memo-3 drawer + save bar case.
+  results.net2.drawer = {};
+  for (const theme of ['light', 'dark']) {
+    await mock({ reset: true });
+    let ctx = await context(browser, theme, { width: 390, height: 844 });
+    let page = await ctx.newPage();
+    for (const s of ['1', '3a', '3b', '3d']) {
+      await shot(page, `NET2-390-step${s}-${theme}`, `/arbs/remote?step=${s}`, (p) => p.waitForSelector(`[data-remote-step="${s}"]`));
+      const wide = await page.evaluate(() => document.documentElement.scrollWidth);
+      check(`NET2 ${theme} 390px step ${s}: no sideways scroll`, wide <= 390, String(wide));
+      check(`NET2 ${theme} 390px step ${s}: addresses hidden`, await addressesMasked(page));
+    }
+    await ctx.close();
+
+    // Drawer open while a setting is not saved yet (the save bar shows "저장 안 한 설정").
+    await mock({ reset: true });
+    ctx = await context(browser, theme, { width: 390, height: 844 });
+    page = await ctx.newPage();
+    await page.goto(`${base}/arbs/controller`);
+    await page.waitForSelector('.page');
+    await page.waitForTimeout(300);
+    await page.locator('details[data-advanced]').evaluate((d) => (d.open = true));
+    await page.check('[data-setting="arbs_trigger_status_off"]');
+    await page.click('.topbar__menu');
+    await page.waitForTimeout(200);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: join(out, `NET2-drawer-savebar-390-${theme}.png`), fullPage: false });
+    results.shots.push({ name: `NET2-drawer-savebar-390-${theme}`, path: '/arbs/controller', file: `NET2-drawer-savebar-390-${theme}.png` });
+    const m = await page.evaluate(async () => {
+      const bar = document.querySelector('.savebar').getBoundingClientRect();
+      const links = [...document.querySelectorAll('#arbs-nav a.nav__link')];
+      const coveredAtTop = links.filter((a) => {
+        const r = a.getBoundingClientRect();
+        return r.bottom > bar.top && r.top < window.innerHeight;
+      }).length;
+      // Keyboard: Tab to the last menu item scrolls it into view; it must not end up under the fixed save bar.
+      const lastLink = links[links.length - 1];
+      lastLink.focus();
+      await new Promise((r) => setTimeout(r, 100));
+      const r = lastLink.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return {
+        saveBarHeight: Math.round(bar.height),
+        shellPadding: getComputedStyle(document.querySelector('.shell')).paddingBottom,
+        coveredAtTop,
+        lastFocusedVisible: Boolean(hit && lastLink.contains(hit)),
+        lastBottom: Math.round(r.bottom),
+        barTop: Math.round(document.querySelector('.savebar').getBoundingClientRect().top),
+      };
+    });
+    results.net2.drawer[theme] = m;
+    check(`NET2 ${theme} 390px drawer: focused last menu item is not under the save bar`, m.lastFocusedVisible, JSON.stringify(m));
+    check(`NET2 ${theme} 390px drawer: unsaved state still shown`, (await page.textContent('.savebar__state')).includes('저장 안 한 설정'));
     await ctx.close();
   }
 

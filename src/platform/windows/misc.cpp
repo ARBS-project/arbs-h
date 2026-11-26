@@ -4,11 +4,14 @@
  */
 // standard includes
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <csignal>
+#include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <iomanip>
 #include <iterator>
@@ -55,6 +58,7 @@
 
 // local includes
 #include "misc.h"
+#include "arbs_interfaces.h"
 #include "src/screen_saver_state.h"
 #include "src/platform/common_services.h"
 #include "nvprefs/nvprefs_interface.h"
@@ -373,6 +377,60 @@ namespace platf {
     }
 
     return info;
+  }
+
+  namespace {
+    bool contains_tailscale(const wchar_t *text) {
+      if (!text) {
+        return false;
+      }
+      std::wstring lower {text};
+      std::transform(lower.begin(), lower.end(), lower.begin(), [](wchar_t c) {
+        return (wchar_t) std::towlower(c);
+      });
+      return lower.find(L"tailscale") != std::wstring::npos;
+    }
+  }  // namespace
+
+  std::vector<arbs::netpolicy::interface_t> arbs_interface_addresses() {
+    std::vector<arbs::netpolicy::interface_t> out;
+    adapteraddrs_t info = get_adapteraddrs();
+    for (auto adapter = info.get(); adapter != nullptr; adapter = adapter->Next) {
+      if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+        continue;
+      }
+      // tailscale_like is decided from the adapter's description / friendly name text ("Tailscale", the name
+      // its installer gives the adapter) or from Tailscale's IPv6 prefix fd7a:115c:a1e0::/48. Text matching is
+      // a guess (a renamed adapter is missed); the screen only uses it as a hint.
+      const bool named = contains_tailscale(adapter->Description) || contains_tailscale(adapter->FriendlyName);
+      for (auto addr = adapter->FirstUnicastAddress; addr != nullptr; addr = addr->Next) {
+        if (addr->DadState != IpDadStatePreferred || addr->Address.lpSockaddr == nullptr) {
+          continue;
+        }
+        char text[INET6_ADDRSTRLEN] {};
+        const auto family = addr->Address.lpSockaddr->sa_family;
+        if (family == AF_INET) {
+          const auto *in4 = (const sockaddr_in *) addr->Address.lpSockaddr;
+          std::array<std::uint8_t, 4> bytes {};
+          std::memcpy(bytes.data(), &in4->sin_addr, bytes.size());
+          const auto kind = arbs::netpolicy::kind_of_v4(bytes);
+          if (!arbs::netpolicy::listed(kind) || !inet_ntop(AF_INET, &in4->sin_addr, text, sizeof(text))) {
+            continue;
+          }
+          out.push_back({kind, text, named});
+        } else if (family == AF_INET6) {
+          const auto *in6 = (const sockaddr_in6 *) addr->Address.lpSockaddr;
+          std::array<std::uint8_t, 16> bytes {};
+          std::memcpy(bytes.data(), &in6->sin6_addr, bytes.size());
+          const auto kind = arbs::netpolicy::kind_of_v6(bytes);
+          if (!arbs::netpolicy::listed(kind) || !inet_ntop(AF_INET6, &in6->sin6_addr, text, sizeof(text))) {
+            continue;
+          }
+          out.push_back({kind, text, named || arbs::netpolicy::tailscale_v6(bytes)});
+        }
+      }
+    }
+    return out;
   }
 
   std::string get_mac_address(const std::string_view &address) {

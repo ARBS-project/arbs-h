@@ -7,7 +7,7 @@ import { guardRoute } from '../logic/guards.ts';
 const base = { signedIn: true, deviceIds: ['dev-1'], appIds: ['app-1'] };
 
 test('top pages always open', () => {
-  for (const path of ['/', '/devices', '/controller', '/display', '/apps', '/troubleshoot', '/account', '/apps/']) {
+  for (const path of ['/', '/devices', '/controller', '/display', '/apps', '/remote', '/remote/', '/troubleshoot', '/account', '/apps/']) {
     assert.equal(guardRoute({ ...base, path }), null, path);
     assert.equal(guardRoute({ ...base, signedIn: false, path }), null, path);
   }

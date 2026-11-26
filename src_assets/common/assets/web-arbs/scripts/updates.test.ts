@@ -36,6 +36,17 @@ test('H022: 0.2.1 sees v0.2.2 with arbs-h-0.2.2-setup.exe; 0.2.2 sees nothing ne
   assert.equal(selectAvailableUpdate('0.2.1', [release('v0.2.2', { prerelease: true })], false), null);
 });
 
+test('NET2: 0.2.2 sees v0.3.0 with arbs-h-0.3.0-setup.exe; 0.3.0 sees nothing newer', () => {
+  assert.equal(windowsSetupAsset('v0.3.0'), 'arbs-h-0.3.0-setup.exe');
+  const list = [release('v0.2.1'), release('v0.2.2'), release('v0.3.0')];
+  assert.equal(selectAvailableUpdate('0.2.2', list, false)?.tag.replace(/^v/, ''), '0.3.0');
+  assert.equal(selectAvailableUpdate('0.2.1', list, false)?.tag.replace(/^v/, ''), '0.3.0');
+  assert.equal(selectAvailableUpdate('0.3.0', list, false), null);
+  assert.equal(selectAvailableUpdate('0.2.2', [release('v0.3.0', {}, 'arbs-h-0.2.2-setup.exe')], false), null);
+  assert.equal(selectAvailableUpdate('0.2.2', [release('v0.3.0', { draft: true })], false), null);
+  assert.equal(selectAvailableUpdate('0.2.2', [release('v0.3.0', { prerelease: true })], false), null);
+});
+
 test('draft, prerelease (notify off), wrong or empty asset are skipped', () => {
   assert.equal(selectAvailableUpdate('0.1.3', [release('v0.2.0', { draft: true })], false), null);
   assert.equal(selectAvailableUpdate('0.1.3', [release('v0.2.0', { prerelease: true })], false), null);

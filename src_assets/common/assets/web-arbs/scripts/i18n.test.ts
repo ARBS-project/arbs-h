@@ -82,6 +82,19 @@ test('dynamic key families are complete', () => {
     'guard.': ['missing_device', 'missing_app', 'sign_in_first', 'not_found'],
     'perm.': ['list', 'view', 'launch', 'clipboard_set', 'clipboard_read', 'server_cmd', 'input_controller', 'input_touch', 'input_pen', 'input_mouse', 'input_kbd'],
     'gamepad.': ['usbip_ds5', 'auto', 'x360', 'ds4', 'vhf', 'vhf_xbox', 'vhf_xbox_one', 'vhf_ds4', 'vhf_ds5', 'vhf_switch', 'vhf_steam'],
+    // NET2 (0.3.0) remote access page
+    'remote.step_': ['0', '1', '2', '3a', '3b', '3c', '3d', '4', '5'],
+    'remote.grade_': ['good', 'warn', 'bad', 'info'],
+    'remote.c_access_': ['this_pc', 'private', 'cgnat', 'public', 'ipv6', 'name'],
+    'remote.c_': ['listeners_ok', 'listeners_failed', 'listeners_unknown', 'upnp_off', 'upnp_not_run', 'upnp_ok', 'upnp_private', 'upnp_failed', 'risk_ok', 'risk_wan', 'risk_upnp_wan', 'overlap', 'overlap_none', 'low_port'],
+    'remote.a_': ['yes', 'no', 'unknown'],
+    'remote.n_': ['already_tailscale', 'wan_not_public', 'unknown_means_tailscale'],
+    'remote.role_': ['https', 'http', 'rtsp', 'video', 'control', 'audio'],
+    'remote.igd_': ['none', 'connected', 'private_ip', 'disconnected', 'unknown_device', 'not_run'],
+    'remote.e_': ['not_number', 'out_of_range'],
+    'remote.w_': ['overlaps_sunshine', 'dynamic_range', 'same_as_now'],
+    'remote.k_': ['upnp', 'origin_web_ui_allowed', 'port', 'lan_encryption_mode', 'wan_encryption_mode', 'enable_pairing'],
+    'remote.g_': ['asus', 'tplink', 'stackon'],
   };
   for (const [prefix, values] of Object.entries(families)) {
     for (const v of values) {
@@ -106,4 +119,19 @@ test('H021 fixed texts: hidden gamepad note, plan A reason, "not ARBS" note', ()
   assert.match(K['apps.not_arbs']!, /ARBS 진동과 무관/);
   assert.match(K['gamepad.usbip_ds5']!, /ARBS 권장\(모든 기능\)/);
   assert.equal(K['nav.stats'], '통계');
+});
+
+test('NET2 fixed texts: other VPNs, link-only consent, port family benefit, no internal IDs', () => {
+  assert.match(K['remote.s2_other']!, /\(예: Tailscale, ZeroTier\)/);
+  assert.equal(K['remote.s4_check_consent'], '이 링크는 브라우저가 직접 엽니다. ARBS-H는 대신 요청하지 않습니다. 그 서비스는 접속한 공인 주소를 볼 수 있습니다.');
+  assert.match(K['remote.s3d_benefit']!, /Vibepollo·Apollo 등\)과 같은 PC에 함께 설치할 때도 포트가 겹치지 않습니다/);
+  assert.match(K['remote.s3d_e1']!, /주소 뒤에 :포트를 붙여 다시 추가해야 할 수 있습니다/);
+  assert.match(K['remote.s3d_e2']!, /공유기 포트 포워딩 규칙도 새 포트로/);
+  assert.match(K['remote.c_access_cgnat']!, /통신사 대역일 수도 있음/);
+  assert.match(K['remote.f_moonlight']!, /47984·47989/);
+  assert.match(K['remote.s3c_policy']!, /절대 열지 않습니다/);
+  assert.equal(K['nav.remote'], '외부 접속');
+  for (const [k, v] of Object.entries({ ...K, ...E })) {
+    if (k.startsWith('remote.')) assert.doesNotMatch(v, /\bNET[0-9]\b|EA-|\bH0[0-9]{2}\b|\bD[0-9]{1,2}\b|\bP[0-9]\b/, k);
+  }
 });

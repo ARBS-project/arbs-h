@@ -86,6 +86,10 @@ void arbs_h_windows_asset_checks() {
   for (const auto &name : {"VibepolloSetup.exe", "VibepolloSetup-v0.2.0.exe", "VibepolloSetup-0.2.0.exe", "arbs-h-0.1.9-setup.exe",
                            "arbs-h-v0.2.0-setup.exe", "ARBS-H-0.2.0-setup.exe", "arbs-h-0.2.0-portable.zip"})
     assert(release_selection::select(json::array({with_asset("v0.2.0", name)}), "0.1.0", false).is_null());
+  // ARBS-H 0.3.0: an installed 0.2.2 is offered v0.3.0 (arbs-h-0.3.0-setup.exe); 0.3.0 itself is not.
+  assert(release_selection::select(json::array({with_asset("v0.3.0", "arbs-h-0.3.0-setup.exe")}), "0.2.2", false)["tag_name"] == "v0.3.0");
+  assert(release_selection::select(json::array({with_asset("v0.3.0", "arbs-h-0.3.0-setup.exe")}), "0.3.0", false).is_null());
+  assert(release_selection::select(json::array({with_asset("v0.3.0", "arbs-h-0.2.2-setup.exe")}), "0.2.2", false).is_null());
   // A Vibepollo 2.20.0 release (higher version number) must never be offered to ARBS-H 0.1.0.
   assert(release_selection::select(json::array({with_asset("v2.20.0", "VibepolloSetup.exe")}), "0.1.0", true).is_null());
 }

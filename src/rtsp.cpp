@@ -52,6 +52,7 @@ extern "C" {
 #include "hardware_metrics_session.h"
 #include "rtsp.h"
 #include "rtsp_pending_policy.h"
+#include "arbs_listener_status.h"  // ARBS-H 0.3.0 S4
 #include "stream.h"
 #include "sync.h"
 #include "thread_pool.h"
@@ -2889,11 +2890,13 @@ namespace rtsp_stream {
 
     boost::system::error_code ec;
     if (server.bind(net::af_from_enum_string(config::sunshine.address_family), net::map_port(rtsp_stream::RTSP_SETUP_PORT), ec)) {
+      arbs::listener_status::set(arbs::listener_status::id_e::rtsp, arbs::listener_status::state_e::failed);
       BOOST_LOG(fatal) << "Couldn't bind RTSP server to port ["sv << net::map_port(rtsp_stream::RTSP_SETUP_PORT) << "], " << ec.message();
       shutdown_event->raise(true);
 
       return;
     }
+    arbs::listener_status::set(arbs::listener_status::id_e::rtsp, arbs::listener_status::state_e::ok);
 
     std::thread rtsp_thread {[&shutdown_event] {
       platf::set_thread_name("rtsp::handler");

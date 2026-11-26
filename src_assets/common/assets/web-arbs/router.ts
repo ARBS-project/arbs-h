@@ -12,6 +12,7 @@ import ControllerView from '@/views/ControllerView.vue';
 import DevicesView from '@/views/DevicesView.vue';
 import DisplayView from '@/views/DisplayView.vue';
 import PairView from '@/views/PairView.vue';
+import RemoteAccessView from '@/views/RemoteAccessView.vue';
 import StatsView from '@/views/StatsView.vue';
 import StatusView from '@/views/StatusView.vue';
 import TroubleshootView from '@/views/TroubleshootView.vue';
@@ -28,6 +29,7 @@ const router = createRouter({
     { path: '/apps', name: 'apps', component: AppsView, meta: { title: 'nav.apps' } },
     { path: '/apps/new', name: 'app-new', component: AppsView, meta: { title: 'apps.add' } },
     { path: '/apps/:uuid', name: 'app', component: AppsView, meta: { title: 'nav.apps' } },
+    { path: '/remote', name: 'remote', component: RemoteAccessView, meta: { title: 'nav.remote' } },
     { path: '/stats', name: 'stats', component: StatsView, meta: { title: 'nav.stats' } },
     { path: '/troubleshoot', name: 'troubleshoot', component: TroubleshootView, meta: { title: 'nav.troubleshoot' } },
     { path: '/account', name: 'account', component: AccountView, meta: { title: 'nav.account' } },

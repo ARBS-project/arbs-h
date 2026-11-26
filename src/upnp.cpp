@@ -36,6 +36,31 @@ namespace upnp {
     std::string description;
   };
 
+  // ARBS-H 0.3.0 (S2): written by the UPnP thread, read by GET /api/network/diagnostics.
+  static arbs::netpolicy::upnp_status_store g_last_status;
+
+  static arbs::netpolicy::igd_e status_kind(igd_status_e status) {
+    using enum igd_status_e;
+    using arbs::netpolicy::igd_e;
+
+    switch (status) {
+      case none:
+        return igd_e::none;
+      case connected:
+        return igd_e::connected;
+#if (MINIUPNPC_API_VERSION >= 18)
+      case private_ip:
+        return igd_e::private_ip;
+#endif
+      case disconnected:
+        return igd_e::disconnected;
+      case unknown_device:
+        return igd_e::unknown_device;
+    }
+
+    return igd_e::unknown_device;
+  }
+
   static std::string_view status_string(igd_status_e status) {
     using enum igd_status_e;
 
@@ -61,9 +86,12 @@ namespace upnp {
    * This function is a wrapper around UPNP_GetValidIGD() that returns the status code. There is a pre-processor
    * check to determine which version of the function to call based on the version of the MiniUPnPc library.
    */
-  igd_status_e UPNP_GetValidIGDStatus(device_t &device, urls_t *urls, IGDdatas *data, std::array<char, INET6_ADDRESS_STRLEN> &lan_addr) {
+  igd_status_e UPNP_GetValidIGDStatus(device_t &device, urls_t *urls, IGDdatas *data, std::array<char, INET6_ADDRESS_STRLEN> &lan_addr, std::array<char, INET6_ADDRESS_STRLEN> *wan_addr) {
+    if (wan_addr) {
+      wan_addr->fill('\0');
+    }
 #if (MINIUPNPC_API_VERSION >= 18)
-    auto status = UPNP_GetValidIGD(device.get(), &urls->el, data, lan_addr.data(), (int) lan_addr.size(), nullptr, 0);
+    auto status = UPNP_GetValidIGD(device.get(), &urls->el, data, lan_addr.data(), (int) lan_addr.size(), wan_addr ? wan_addr->data() : nullptr, wan_addr ? (int) wan_addr->size() : 0);
 #else
     auto status = UPNP_GetValidIGD(device.get(), &urls->el, data, lan_addr.data(), (int) lan_addr.size());
 #endif
@@ -88,26 +116,19 @@ namespace upnp {
   class deinit_t: public platf::deinit_t {
   public:
     deinit_t() {
-      auto rtsp = std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT));
-      auto video = std::to_string(net::map_port(stream::VIDEO_STREAM_PORT));
-      auto audio = std::to_string(net::map_port(stream::AUDIO_STREAM_PORT));
-      auto control = std::to_string(net::map_port(stream::CONTROL_PORT));
-      auto gs_http = std::to_string(net::map_port(nvhttp::PORT_HTTP));
-      auto gs_https = std::to_string(net::map_port(nvhttp::PORT_HTTPS));
-      auto wm_http = std::to_string(net::map_port(confighttp::PORT_HTTPS));
+      static_assert(arbs::netpolicy::offset_rtsp == rtsp_stream::RTSP_SETUP_PORT);
+      static_assert(arbs::netpolicy::offset_video == stream::VIDEO_STREAM_PORT);
+      static_assert(arbs::netpolicy::offset_audio == stream::AUDIO_STREAM_PORT);
+      static_assert(arbs::netpolicy::offset_control == stream::CONTROL_PORT);
+      static_assert(arbs::netpolicy::offset_http == nvhttp::PORT_HTTP);
+      static_assert(arbs::netpolicy::offset_https == nvhttp::PORT_HTTPS);
+      static_assert(arbs::netpolicy::offset_web_ui == confighttp::PORT_HTTPS);
 
-      mappings.assign({
-        {{rtsp, rtsp, "TCP"s}, "Sunshine - RTSP"s},
-        {{video, video, "UDP"s}, "Sunshine - Video"s},
-        {{audio, audio, "UDP"s}, "Sunshine - Audio"s},
-        {{control, control, "UDP"s}, "Sunshine - Control"s},
-        {{gs_http, gs_http, "TCP"s}, "Sunshine - Client HTTP"s},
-        {{gs_https, gs_https, "TCP"s}, "Sunshine - Client HTTPS"s},
-      });
-
-      // Only map port for the Web Manager if it is configured to accept connection from WAN
-      if (net::from_enum_string(config::nvhttp.origin_web_ui_allowed) > net::LAN) {
-        mappings.emplace_back(mapping_t {{wm_http, wm_http, "TCP"s}, "Sunshine - Configuration API"s});
+      // ARBS-H 0.3.0 (S3, NET1 D2): ARBS never maps the web UI port, even when origin_web_ui_allowed is wan.
+      // The list (arbs_network_policy.h upnp_mappings) has the 6 streaming ports only.
+      for (const auto &m : arbs::netpolicy::upnp_mappings(config::sunshine.port)) {
+        auto port = std::to_string(m.port);
+        mappings.emplace_back(mapping_t {{port, port, std::string(m.proto)}, std::string(m.description)});
       }
 
       // Start the mapping thread
@@ -231,7 +252,10 @@ namespace upnp {
             BOOST_LOG(debug) << "Mapping entry found for "sv << mapping.port.wan << " ("sv << leaseDuration << " seconds remaining)"sv;
           }
         } else {
-          BOOST_LOG(warning) << "UPnP conflict detected with: "sv << intClient;
+          // ARBS-H 0.3.0 (P6): the other device's address is not logged, only its kind.
+          const auto other = arbs::netpolicy::parse_v4(intClient);
+          BOOST_LOG(warning) << "UPnP conflict detected with another device ("sv
+                             << (other ? arbs::netpolicy::to_string(arbs::netpolicy::kind_of_v4(*other)) : "unknown"sv) << ')';
 
           // Some UPnP IGDs won't let unauthenticated clients delete other conflicting port mappings
           // for security reasons, but we will give it a try anyway.
@@ -337,6 +361,7 @@ namespace upnp {
         device_t device {upnpDiscover(2000, nullptr, nullptr, 0, IPv4, 2, &err)};
         if (!device || err) {
           BOOST_LOG(warning) << "Couldn't discover any IPv4 UPNP devices"sv;
+          g_last_status.set({arbs::netpolicy::igd_e::none, 0, (int) mappings.size()});
           mapped = false;
           continue;
         }
@@ -346,11 +371,19 @@ namespace upnp {
         }
 
         std::array<char, INET6_ADDRESS_STRLEN> lan_addr;
+        std::array<char, INET6_ADDRESS_STRLEN> wan_addr;
 
         urls_t urls;
-        auto status = upnp::UPNP_GetValidIGDStatus(device, &urls, &data, lan_addr);
+        auto status = upnp::UPNP_GetValidIGDStatus(device, &urls, &data, lan_addr, &wan_addr);
+        // ARBS-H 0.3.0 (S2): only the kind of the external address is kept; the text is cleared right away.
+        arbs::netpolicy::upnp_status_t last;
+        last.igd = status_kind(status);
+        last.mapped_total = (int) mappings.size();
+        last.wan_kind = arbs::netpolicy::wan_kind_of(std::string_view {wan_addr.data()});
+        wan_addr.fill('\0');
         if (!is_valid_igd(status)) {
           BOOST_LOG(error) << status_string(status);
+          g_last_status.set(last);
           mapped = false;
           continue;
         }
@@ -360,20 +393,26 @@ namespace upnp {
         BOOST_LOG(debug) << "Found valid IGD device: "sv << urls->rootdescURL;
 
         for (auto it = std::begin(mappings); it != std::end(mappings) && !shutdown_event->peek(); ++it) {
-          map_upnp_port(data, urls, lan_addr_str, *it);
+          if (map_upnp_port(data, urls, lan_addr_str, *it)) {
+            ++last.mapped_ok;
+          }
         }
 
         if (!mapped) {
-          BOOST_LOG(info) << "Completed UPnP port mappings to "sv << lan_addr_str << " via "sv << urls->rootdescURL;
+          // ARBS-H 0.3.0 (P6): no LAN or router address in the log, only the counts.
+          BOOST_LOG(info) << "Completed UPnP port mappings ("sv << last.mapped_ok << '/' << last.mapped_total << ')';
         }
 
         // If we are listening on IPv6 and the IGD has an IPv6 firewall enabled, try to create IPv6 firewall pinholes
         if (address_family == net::af_e::BOTH) {
-          if (create_ipv6_pinholes() && !mapped) {
+          const bool pinholes = create_ipv6_pinholes();
+          last.ipv6_pinhole = pinholes ? arbs::netpolicy::pinhole_e::ok : arbs::netpolicy::pinhole_e::failed;
+          if (pinholes && !mapped) {
             // Only log the first time through
             BOOST_LOG(info) << "Successfully opened IPv6 pinholes on the IGD"sv;
           }
         }
+        g_last_status.set(last);
 
         mapped = true;
         mapped_urls = std::move(urls);
@@ -396,5 +435,9 @@ namespace upnp {
     }
 
     return std::make_unique<deinit_t>();
+  }
+
+  arbs::netpolicy::upnp_status_t last_status() {
+    return g_last_status.get();
   }
 }  // namespace upnp

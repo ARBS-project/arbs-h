@@ -36,6 +36,7 @@
 // local includes
 #include "amf/amf_config_policy.h"
 #include "amf/amf_lifecycle.h"
+#include "arbs_network_policy.h"  // ARBS-H 0.3.0 S5: port range rule (1019..1028 kept with a warning)
 #include "arbs_trigger_status.h"  // ARBS-H B3b: arbs_trigger_status value parsing
 #include "config.h"
 #include "control_peer_timeout.h"
@@ -1138,7 +1139,7 @@ namespace config {
     0,  // update_check_interval_seconds: ARBS-H development build default off (code kept)
 #endif
     true,  // session_history_enabled
-    30,  // session_history_ttl_days (ARBS-H H022: 30 days by default; 0 disables age pruning)
+    30,  // session_history_ttl_days (ARBS-H: 30 days by default; 0 disables age pruning)
     0  // session_history_db_size_limit_mb (disabled by default)
   };
 
@@ -2306,8 +2307,17 @@ namespace config {
       return arbs::trigger_status::setting_from(value, to_bool(value));
     });
 
+    // ARBS-H 0.3.0 S5: accepted range unchanged (1019..65514) so an existing value never moves silently;
+    // 1019..1028 is used as before with a warning (HTTPS port base-5 would be below 1024). The web screens
+    // offer 1029 and up. The default stays 47989 (new installs get port = 45989 from the installer only).
+    static_assert(arbs::netpolicy::accepted_min_port == 1024 + nvhttp::PORT_HTTPS);
+    static_assert(arbs::netpolicy::recommended_min_port == 1024 - nvhttp::PORT_HTTPS);
+    static_assert(arbs::netpolicy::max_port == 65535 - rtsp_stream::RTSP_SETUP_PORT);
     int port = sunshine.port;
-    int_between_f(vars, "port"s, port, {1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT});
+    int_between_f(vars, "port"s, port, {arbs::netpolicy::accepted_min_port, arbs::netpolicy::max_port});
+    if (arbs::netpolicy::port_rule(port) == arbs::netpolicy::port_rule_e::use_with_warning) {
+      BOOST_LOG(warning) << arbs::netpolicy::port_warning_text(port);
+    }
     sunshine.port = (std::uint16_t) port;
 
     string_restricted_f(vars, "address_family", sunshine.address_family, {"ipv4"sv, "both"sv});

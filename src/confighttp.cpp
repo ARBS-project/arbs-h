@@ -47,6 +47,12 @@
 #endif
 // local includes
 #include "arbs_config_patch.h"
+#include "arbs_listener_status.h"  // ARBS-H 0.3.0 S4
+#include "arbs_network_diagnostics.h"  // ARBS-H 0.3.0 S1: GET /api/network/diagnostics
+#include "upnp.h"  // ARBS-H 0.3.0 S2: upnp::last_status()
+#ifdef _WIN32
+  #include "platform/windows/arbs_interfaces.h"  // ARBS-H 0.3.0 S1: platf::arbs_interface_addresses()
+#endif
 #include "arbs_startup_errors.h"
 #include "arbs_webui_route.h"
 #include "config.h"
@@ -3277,6 +3283,30 @@ namespace confighttp {
     send_response(response, output_tree);
   }
 
+  /**
+   * @brief ARBS-H 0.3.0 (S1): read-only network facts for the "remote access" page (docs/analysis/NET2.md 4).
+   * @details Sign-in required. No print_req (it logs Host/Origin/Referer at verbose) and nothing about this
+   * reply is logged. Cache-Control: no-store. Interface addresses are for the screen (hidden by default);
+   * the UPnP WAN address is never included, adapter names are never included.
+   */
+  void getNetworkDiagnostics(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    arbs::netdiag::inputs_t in;
+    in.port = config::sunshine.port;
+    in.listeners = arbs::listener_status::snapshot();
+    in.upnp_enabled = config::sunshine.flags[config::flag::UPNP];
+    in.upnp = upnp::last_status();
+    in.origin_wan = net::from_enum_string(config::nvhttp.origin_web_ui_allowed) > net::LAN;
+#ifdef _WIN32
+    in.interfaces_supported = true;
+    in.interfaces = platf::arbs_interface_addresses();
+#endif
+    send_response(response, arbs::netdiag::build(in), arbs::netdiag::cache_control);
+  }
+
   void getNightlyUpdateMetadata(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) {
       return;
@@ -6502,6 +6532,8 @@ namespace confighttp {
 #endif
     register_api_route("^/api/logs$", "GET", getLogs);
     register_api_route("^/api/config$", "GET", getConfig);
+    // ARBS-H 0.3.0 (S1): read-only, sign-in required, not logged.
+    register_api_route("^/api/network/diagnostics$", "GET", getNetworkDiagnostics);
     register_api_route("^/api/config$", "POST", saveConfig);
     // Partial updates for config settings; merges with existing file and
     // removes keys when value is null or empty string.
@@ -6634,6 +6666,7 @@ namespace confighttp {
       try {
         platf::set_thread_name("confighttp::tcp");
         server->start([](unsigned short) {
+          arbs::listener_status::set(arbs::listener_status::id_e::confighttp, arbs::listener_status::state_e::ok);
           BOOST_LOG(info) << "Configuration UI available at ["sv << get_web_ui_url() << "]";
         });
       } catch (boost::system::system_error &err) {
@@ -6641,6 +6674,7 @@ namespace confighttp {
         if (shutdown_event->peek()) {
           return;
         }
+        arbs::listener_status::set(arbs::listener_status::id_e::confighttp, arbs::listener_status::state_e::failed);
         BOOST_LOG(fatal) << "Couldn't start Configuration HTTPS server on port ["sv << port_https << "]: "sv << err.what();
         shutdown_event->raise(true);
         return;

@@ -2127,6 +2127,15 @@ sunshine_register_component(NAME test_component_arbs_config_patch TEST_SOURCE un
 # ARBS-H R1a-fix1 F5/F6: unreadable TLS certificate -> one message (paths, what(), code); constructor only, no listener.
 sunshine_register_component(NAME test_component_arbs_startup_errors TEST_SOURCE unit/test_arbs_startup_errors.cpp
     LINK_LIBRARIES sunshine_test_simple_web_headers ${SUNSHINE_TEST_SOCKET_LIBRARIES})
+# ARBS-H 0.3.0 S1-S5: header-only port rules, address kinds, UPnP list/status, listener states and the
+# GET /api/network/diagnostics body (no log record), plus the shared sign-in check for the route.
+sunshine_register_component(NAME test_component_arbs_network_diagnostics TEST_SOURCE unit/test_arbs_network_diagnostics.cpp
+    PRODUCT_SOURCES
+        "${SUNSHINE_TEST_REPOSITORY_ROOT}/src/http_auth_policy.cpp"
+        "${SUNSHINE_TEST_REPOSITORY_ROOT}/src/http_auth_request_policy.cpp"
+        "${SUNSHINE_TEST_REPOSITORY_ROOT}/src/config_http_policy.cpp"
+    LINK_LIBRARIES nlohmann_json::nlohmann_json sunshine_test_simple_web_headers Boost::log
+        Boost::algorithm Boost::function Boost::property_tree Threads::Threads ${SUNSHINE_TEST_SOCKET_LIBRARIES})
 
 sunshine_register_component(NAME test_component_dualsense_audio_pcm TEST_SOURCE unit/test_dualsense_audio_pcm.cpp)
 sunshine_register_component(NAME test_component_dualsense_launch_policy TEST_SOURCE unit/test_dualsense_launch_policy.cpp)

@@ -7,6 +7,14 @@
 
 #include <src/version_compare.h>
 
+// ARBS-H 0.3.0: an installed 0.2.2 sees the v0.3.0 release as newer (update check), 0.3.0 does not.
+TEST(VersionCompareTest, ArbsH022SeesV030) {
+  EXPECT_LT(version_compare::compare_semver("0.2.2", "v0.3.0"), 0);
+  EXPECT_GT(version_compare::compare_semver("v0.3.0", "0.2.2"), 0);
+  EXPECT_EQ(version_compare::compare_semver("0.3.0", "v0.3.0"), 0);
+  EXPECT_LT(version_compare::compare_semver("0.2.10", "0.3.0"), 0);
+}
+
 TEST(VersionCompareTest, StableRespinsSortAbovePlainRelease) {
   EXPECT_LT(version_compare::compare_semver("1.14.14", "1.14.14-stable.1"), 0);
   EXPECT_GT(version_compare::compare_semver("1.14.14-stable.1", "1.14.14"), 0);

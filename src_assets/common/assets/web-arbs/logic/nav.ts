@@ -26,6 +26,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/devices', label: 'nav.devices', feature: 'H-NAV-03' },
       { to: '/apps', label: 'nav.apps', feature: 'H-NAV-02' },
+      // ARBS-H 0.3.0 (NET2, D12): remote access wizard in the "connect" group.
+      { to: '/remote', label: 'nav.remote', feature: '' },
     ],
   },
   {

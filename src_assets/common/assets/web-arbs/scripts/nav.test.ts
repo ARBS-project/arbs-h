@@ -24,6 +24,11 @@ test('four groups, each with a title and at least one item; stats in "manage"', 
     manage.items.map((i) => i.to),
     ['/stats', '/troubleshoot', '/account'],
   );
+  // NET2 (0.3.0, D12): "외부 접속" is in the connect group.
+  assert.deepEqual(
+    NAV_GROUPS.find((g) => g.id === 'connect')!.items.map((i) => i.to),
+    ['/devices', '/apps', '/remote'],
+  );
   const all = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.to));
   assert.equal(new Set(all).size, all.length);
   for (const to of all) assert.doesNotMatch(to, /stream/i, 'no browser stream page');

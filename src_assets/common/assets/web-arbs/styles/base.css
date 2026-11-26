@@ -751,6 +751,126 @@ input[type='range'] {
   background: var(--arbs-primary-tint);
 }
 
+/* NET2 (0.3.0): remote access page. Step buttons, line drawings (theme colours only), hidden address rows. */
+.remote__steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.75rem;
+}
+.remote__step {
+  min-height: 2rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--arbs-border-input);
+  border-radius: 999px;
+  background: var(--arbs-bg);
+  color: var(--arbs-text);
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.remote__step--sub {
+  border-style: dashed;
+}
+.remote__step[aria-current='step'] {
+  border-color: var(--arbs-tint-bar);
+  background: var(--arbs-primary-tint);
+  color: var(--arbs-primary);
+  font-weight: 700;
+}
+.remote__never-list {
+  margin: 0.2rem 0;
+  padding-left: 1.2rem;
+  font-weight: 700;
+}
+.remote__address {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+}
+.remote__address code {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--arbs-border);
+  border-radius: 0.375rem;
+  background: var(--arbs-bg);
+  font-size: 0.95rem;
+}
+.remote__links,
+.remote__guides {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+  margin: 0.3rem 0;
+}
+.remote__guides {
+  padding: 0;
+  list-style: none;
+}
+.remote__methods {
+  margin-top: 0.75rem;
+}
+.remote__method {
+  background: var(--arbs-bg);
+  box-shadow: none;
+}
+.remote__checks .grade {
+  margin-left: 0;
+}
+.diagram {
+  display: block;
+  width: 100%;
+  max-width: 40rem;
+  height: auto;
+  margin: 0.25rem 0 0.75rem;
+}
+.diagram__box,
+.diagram__cloud {
+  fill: var(--arbs-bg);
+  stroke: var(--arbs-border-input);
+  stroke-width: 2;
+}
+.diagram__cloud {
+  stroke-dasharray: 6 4;
+}
+.diagram__box--accent {
+  stroke: var(--arbs-primary);
+}
+.diagram__line,
+.diagram__tunnel {
+  fill: none;
+  stroke: var(--arbs-muted);
+  stroke-width: 2.5;
+}
+.diagram__line--soft {
+  stroke: var(--arbs-border-input);
+  stroke-dasharray: 4 4;
+}
+.diagram__tunnel {
+  stroke: var(--arbs-primary);
+  stroke-width: 3;
+}
+.diagram__arrow {
+  fill: var(--arbs-muted);
+}
+.diagram__text,
+.diagram__sub {
+  fill: var(--arbs-text);
+  font-size: 16px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+.diagram__sub {
+  fill: var(--arbs-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+.diagram__sub--accent {
+  fill: var(--arbs-primary);
+  font-weight: 700;
+}
+
 /* narrow screens (phone remote management): one column, menu as a drawer */
 @media (max-width: 860px) {
   .topbar__menu.button {

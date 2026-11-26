@@ -1,5 +1,7 @@
 // ARBS-H UI1b: small mock of the ARBS-H web API for screenshots and manual checks.
 // H021: the 4 install default apps, restorable-system-apps, session history and host usage.
+// NET2 (0.3.0): GET /api/network/diagnostics with format-only example addresses (100.x.y.z, 192.168.x.y), never real
+// ones; PATCH of port / upnp answers restartRequired like the server.
 // Serves a built ARBS WebUI (vite build output) at /arbs/ and fake /api/* answers.
 // Local only (127.0.0.1). Not shipped: scripts/ is not part of the build.
 // Usage: node scripts/mock-server.mjs --dist <build dir> [--port 5180] [--images <dir>]
@@ -31,6 +33,16 @@ const initial = () => ({
   },
   session: { activeSessions: 1, appRunning: true, appName: 'Desktop', paused: false, lastEncoderProbeFailed: false, status: true },
   golden: { exists: false },
+  // NET2: what the diagnostics API reports besides the config file (listeners, UPnP result, this PC's addresses).
+  net: {
+    listeners: { nvhttp_http: 'ok', nvhttp_https: 'ok', confighttp: 'ok', rtsp: 'ok', stream: 'ok' },
+    upnp: { igd: 'not_run', mapped_ok: 0, mapped_total: 0, ipv6_pinhole: 'not_tried', wan_kind: 'unknown' },
+    interfaces: [
+      { kind: 'private_v4', address: '192.168.x.y', tailscale_like: false },
+      { kind: 'cgnat_v4', address: '100.x.y.z', tailscale_like: true },
+    ],
+    fail: false,
+  },
   devices: [
     {
       uuid: '11111111-2222-3333-4444-555555555555',
@@ -94,7 +106,7 @@ function restorable(apps) {
 }
 
 const LOG = [
-  '[2026-11-25 10:00:00.001]: Info: ARBS-H 0.2.2 (based on Vibepollo 2.18.9)',
+  '[2026-11-25 10:00:00.001]: Info: ARBS-H 0.3.0 (based on Vibepollo 2.18.9)',
   '[2026-11-25 10:00:00.120]: Info: Gamepad: usbip_ds5 (DualSense)',
   '[2026-11-25 10:00:01.500]: Warning: Display helper: snapshot missing',
   '[2026-11-25 10:00:02.010]: Info: Configuration UI available at [https://localhost:47990]',
@@ -145,7 +157,7 @@ const server = createServer(async (req, res) => {
   if (p === '/__mock/state' && m === 'POST') {
     const patch = await body(req);
     if (patch.reset) state = initial();
-    state = { ...state, ...patch, config: { ...state.config, ...(patch.config ?? {}) } };
+    state = { ...state, ...patch, config: { ...state.config, ...(patch.config ?? {}) }, net: { ...state.net, ...(patch.net ?? {}) } };
     return json(res, { ok: true });
   }
   if (p === '/__mock/last') return json(res, state);
@@ -182,7 +194,7 @@ const server = createServer(async (req, res) => {
   if (p === '/api/metadata')
     return json(res, {
       status: true,
-      version: '0.2.2',
+      version: '0.3.0',
       platform: 'windows',
       architecture: 'x86_64',
       branch: 'arbs-h',
@@ -238,12 +250,44 @@ const server = createServer(async (req, res) => {
     if (!summary) return json(res, { status: false }, 404);
     return json(res, { ...summary, samples: samples(uuid), events: [], total_samples: 6, history_status: { available: true } });
   }
-  if (p === '/api/config' && m === 'GET') return json(res, { status: true, platform: 'windows', version: '0.2.2', ...state.config });
+  if (p === '/api/config' && m === 'GET') return json(res, { status: true, platform: 'windows', version: '0.3.0', ...state.config });
   if (p === '/api/config' && m === 'PATCH') {
     const patch = await body(req);
-    state.config = { ...state.config, ...patch };
+    const config = { ...state.config, ...patch };
+    // Like the server: null or '' removes the key.
+    for (const [k, v] of Object.entries(patch)) if (v === null || v === '') delete config[k];
+    state.config = config;
     state.lastPatch = patch;
-    return json(res, { status: true, appliedNow: true, deferred: false, restartRequired: false });
+    state.patches = [...(state.patches ?? []), patch];
+    const restart = Object.keys(patch).some((k) => ['port', 'address_family', 'upnp', 'pkey', 'cert'].includes(k));
+    return json(res, { status: true, appliedNow: !restart, deferred: false, restartRequired: restart });
+  }
+  if (p === '/api/network/diagnostics' && m === 'GET') {
+    if (state.net.fail) return json(res, { status: false, error: 'mock: diagnostics off' }, 404);
+    // The port the running server uses (a saved new port only counts after a restart: state.net.port).
+    const raw = String(state.net.port ?? state.config.port ?? '');
+    const n = /^\d+$/.test(raw) ? Number(raw) : 47989;
+    const port = n >= 1019 && n <= 65514 ? n : 47989;
+    const all = [port - 5, port, port + 1, port + 21, port + 9, port + 10, port + 11];
+    const upnpOn = ['enabled', 'true', 'on', '1'].includes(String(state.config.upnp ?? '').toLowerCase());
+    const wan = state.config.origin_web_ui_allowed === 'wan';
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(
+      JSON.stringify({
+        status: true,
+        port,
+        tcp: [{ port: port - 5, role: 'https' }, { port, role: 'http' }, { port: port + 21, role: 'rtsp' }],
+        udp: [{ port: port + 9, role: 'video' }, { port: port + 10, role: 'control' }, { port: port + 11, role: 'audio' }],
+        web_ui_port: port + 1,
+        never_open: [{ port: port + 1, why: 'web_ui' }, { port: 3240, why: 'usbip' }],
+        port_note: port < 1029 ? 'below_1029' : all.some((q) => q >= 47984 && q <= 48010) ? 'overlaps_sunshine_default' : '',
+        listeners: state.net.listeners,
+        upnp: { enabled: upnpOn, web_ui_mapped: false, ...state.net.upnp },
+        interfaces: state.net.interfaces,
+        interfaces_supported: true,
+        risk: { upnp_with_wan_origin: upnpOn && wan, origin_wan: wan },
+      }),
+    );
   }
   if (p === '/api/clients/list') return json(res, { status: true, platform: 'windows', named_certs: state.devices });
   if (/^\/api\/clients\/(update|unpair|disconnect)$/.test(p)) {

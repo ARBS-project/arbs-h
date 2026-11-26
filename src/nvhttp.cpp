@@ -107,6 +107,7 @@
 #include "video.h"
 #include "webrtc_stream.h"
 #include "zwpad.h"
+#include "arbs_listener_status.h"  // ARBS-H 0.3.0 S4: listener bind result for the diagnostics API
 
 using namespace std::literals;
 
@@ -7618,16 +7619,21 @@ launch_session->exact_target_hold.reset();
     http_server.config.port = port_http;
 
     auto accept_and_run = [&](auto *http_server) {
+      // ARBS-H 0.3.0 S4: which of the two GameStream listeners this thread runs.
+      const auto listener = (void *) http_server == (void *) &https_server ? arbs::listener_status::id_e::nvhttp_https : arbs::listener_status::id_e::nvhttp_http;
       try {
         std::string name = "nvhttp::" + std::to_string(http_server->config.port);
         platf::set_thread_name(name);
-        http_server->start();
+        http_server->start([listener](unsigned short) {
+          arbs::listener_status::set(listener, arbs::listener_status::state_e::ok);
+        });
       } catch (boost::system::system_error &err) {
         // It's possible the exception gets thrown after calling http_server->stop() from a different thread
         if (shutdown_event->peek()) {
           return;
         }
 
+        arbs::listener_status::set(listener, arbs::listener_status::state_e::failed);
         BOOST_LOG(fatal) << "Couldn't start http server on ports ["sv << port_https << ", "sv << port_https << "]: "sv << err.what();
         shutdown_event->raise(true);
         return;

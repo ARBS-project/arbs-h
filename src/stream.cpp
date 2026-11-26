@@ -63,6 +63,7 @@ extern "C" {
 #include "pyrowave_protocol.h"
 #include "remote_display_topology.h"
 #include "rtsp.h"
+#include "arbs_listener_status.h"  // ARBS-H 0.3.0 S4
 #include "rtsp_pending_policy.h"
 #include "send_result_observation.h"
 #include "session_history.h"
@@ -3423,7 +3424,12 @@ namespace stream {
     }
     auto protocol = net::udp_protocol_for_address(bind_addr);
 
+    // ARBS-H 0.3.0 S4: the three UDP binds of the first session; failed on any bind error, ok after all three.
+    const auto stream_failed = [] {
+      arbs::listener_status::set(arbs::listener_status::id_e::stream, arbs::listener_status::state_e::failed);
+    };
     if (ctx.control_server.bind(address_family, control_port)) {
+      stream_failed();
       BOOST_LOG(error) << "Couldn't bind Control server to port ["sv << control_port << "], likely another process already bound to the port"sv;
 
       return -1;
@@ -3445,6 +3451,7 @@ namespace stream {
 
     ctx.video_sock.bind(udp::endpoint(bind_addr, video_port), ec);
     if (ec) {
+      stream_failed();
       BOOST_LOG(fatal) << "Couldn't bind Video server to port ["sv << video_port << "]: "sv << ec.message();
 
       return -1;
@@ -3470,10 +3477,12 @@ namespace stream {
 
     ctx.audio_sock.bind(udp::endpoint(bind_addr, audio_port), ec);
     if (ec) {
+      stream_failed();
       BOOST_LOG(fatal) << "Couldn't bind Audio server to port ["sv << audio_port << "]: "sv << ec.message();
 
       return -1;
     }
+    arbs::listener_status::set(arbs::listener_status::id_e::stream, arbs::listener_status::state_e::ok);
 
 #ifdef _WIN32
     // Audio uses the same raw Winsock sender and bounded pressure retry.
