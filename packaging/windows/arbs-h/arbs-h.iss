@@ -202,7 +202,7 @@ begin
   OptPage := CreateInputOptionPage(wpSelectDir,
     'Vibepollo와 함께 쓰기',
     '처음 설치할 때 한 번 고릅니다. 체크하지 않은 항목은 아무것도 바꾸지 않습니다.',
-    'Vibepollo와 ARBS-H는 같은 포트(47984~48010)를 씁니다. 둘이 동시에 켜지면 ARBS-H가 시작하지 못합니다.',
+    'Vibepollo와 ARBS-H를 동시에 켜면 충돌할 수 있어, Vibepollo가 켜져 있으면 ARBS-H를 자동으로 시작하지 않습니다.',
     False, False);
 
   if not PlanOk then

@@ -18,7 +18,7 @@ concurrency:
 
 env:
   # ARBS-project/arbs commit that provides build/host scripts and the ENet patch (update by hand; Dependabot does not).
-  ARBS_BUILD_SHA: 21dd1f722199bc3fb302213c28042e476ea83a1f
+  ARBS_BUILD_SHA: 0ade4002eb66d22a790a432762e66a9aa25e75eb
   # Pinned upstream TrueHDR runtime (Nonary/vibeshine_truehdr_runtime v1.0.0), checked before use.
   TRUEHDR_ZIP_URL: https://github.com/Nonary/vibeshine_truehdr_runtime/releases/download/v1.0.0/vibeshine-truehdr-runtime-1.0.0-windows-x64.zip
   TRUEHDR_ZIP_SHA256: 1e1e5c4d231900fec78375f0ced643bb3e7dafa5d6e0325474e4412a30ea4abf

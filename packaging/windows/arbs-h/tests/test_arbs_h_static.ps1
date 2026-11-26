@@ -11,9 +11,9 @@ param(
   [Parameter(Mandatory = $true)][string]$StageDir,
   [Parameter(Mandatory = $true)][string]$SetupExe,
   [string]$UninstallKeysFile = '',
-  [string]$Version = '0.2.2',
-  # H013 S11: commit the changes of this release start from (H022 0.2.2: v0.2.1 = abcf16b44; H021 used v0.2.0 = 5472d513a; UI1b used v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
-  [string]$BaseCommit = 'abcf16b44b8312ed176c9b5871f0446579841098'
+  [string]$Version = '0.3.0',
+  # H013 S11: commit the changes of this release start from (NET2 0.3.0: v0.2.2 = db6b5136f; H022 used v0.2.1 = abcf16b44; H021 used v0.2.0 = 5472d513a; UI1b used v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
+  [string]$BaseCommit = 'db6b5136f2c26b3172454927d359e2c8d1f12072'
 )
 $ErrorActionPreference = 'Stop'
 $pkg = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -264,6 +264,33 @@ foreach ($e in $s12) {
 Ok (-not ([IO.File]::ReadAllText((Join-Path $pkg 'sunshine.conf'))).Contains('session_history_ttl_days')) 'S12 installer template leaves session_history_ttl_days unset (server default 30)'
 $s12Help = [IO.File]::ReadAllText((Join-Path $srcRoot 'src_assets\common\assets\web-arbs\locales\ko.json'), [Text.Encoding]::UTF8)
 Ok ($s12Help.Contains('0 = ' + [char]0xC9C0 + [char]0xC6B0 + [char]0xC9C0 + ' ' + [char]0xC54A + [char]0xC74C + '. ' + [char]0xAE30 + [char]0xBCF8 + ' 30' + [char]0xC77C + '.')) 'S12 ko help text "0 = (never). (default) 30 (days)."'
+
+# S13 (NET2 0.3.0): the server and web default port stays 47989 (existing installs do not move); only the installer
+# writes port = 45989 into a new configuration; UPnP never maps the web UI port; the diagnostics API signs in first,
+# logs nothing and is not cached; the installer text names no fixed port range.
+$s13 = @(
+  @{ F = 'src\config.cpp'; P = '(?m)^\s*47989,\s*// Base port number'; N = 'server default port 47989' },
+  @{ F = 'src_assets\common\assets\web\configs\settingsSchema.ts'; P = '(?m)^\s*port: 47989,'; N = 'v2 screen default 47989' },
+  @{ F = 'src_assets\common\assets\web\config.html'; P = '(?m)^\s*port: 47989,'; N = 'v2 config.html default 47989' },
+  @{ F = 'src_assets\common\assets\web-legacy\config.html'; P = '(?m)^\s*port: 47989,'; N = 'classic screen default 47989' },
+  @{ F = 'src\arbs_network_policy.h'; P = 'arbs_recommended_port = 45989;'; N = 'ARBS port constant 45989' })
+foreach ($e in $s13) {
+  $t = [IO.File]::ReadAllText((Join-Path $srcRoot $e.F))
+  Ok ($t -match $e.P) "S13 $($e.F): $($e.N)"
+}
+$upnpText = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\upnp.cpp'))
+Ok (-not $upnpText.Contains('Configuration API') -and -not $upnpText.Contains('origin_web_ui_allowed')) 'S13 upnp.cpp maps no web UI port (no "Configuration API", no origin check)'
+Ok ($upnpText.Contains('arbs::netpolicy::upnp_mappings(config::sunshine.port)')) 'S13 upnp.cpp takes its list from upnp_mappings'
+$chText = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\confighttp.cpp'))
+$diag = $chText.Substring($chText.IndexOf('void getNetworkDiagnostics('))
+$diag = $diag.Substring(0, $diag.IndexOf("`n  }") + 4)
+Ok ($diag.IndexOf('authenticate(response, request)') -gt 0 -and $diag.IndexOf('authenticate(response, request)') -lt $diag.IndexOf('arbs::netdiag::build')) 'S13 diagnostics handler signs in before building the reply'
+Ok (-not $diag.Contains('print_req') -and -not $diag.Contains('BOOST_LOG')) 'S13 diagnostics handler logs nothing (no print_req, no BOOST_LOG)'
+Ok ($diag.Contains('arbs::netdiag::cache_control')) 'S13 diagnostics reply sent with Cache-Control no-store'
+Ok ($chText.Contains('register_api_route("^/api/network/diagnostics$", "GET", getNetworkDiagnostics);')) 'S13 diagnostics route is GET only'
+Ok (-not $iss.Contains('47984~48010')) 'S13 iss names no fixed port range'
+Ok ($helperText.Contains('$script:ArbsDefaultPort = 45989') -and -not $helperText.Contains('$script:StreamPorts')) 'S13 setup helper: new-install port 45989, no fixed port list'
+Ok (-not (([IO.File]::ReadAllText((Join-Path $pkg 'sunshine.conf'))) -match '(?m)^\s*port\s*=')) 'S13 template sunshine.conf has no port line (only a new config gets one)'
 
 Ok (Test-Path -LiteralPath $SetupExe) 'setup.exe exists'
 $shaFile = "$SetupExe.sha256"

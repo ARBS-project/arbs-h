@@ -29,6 +29,8 @@ function New-FakeState {
       usbip2_ude    = @{ Start = 3; Delayed = $false; State = 'RUNNING'; Bin = 'System32\drivers\usbip2_ude.sys'; StopWorks = $true }
     }
     Usbip = $true; SudoVda = $true; Ports = @(); Exits = @{}
+    # NET2: listening TCP ports over IPv6 and bound UDP ports (IPv4 / IPv6) for the netstat fake.
+    Ports6 = @(); UdpPorts = @(); UdpPorts6 = @()
     # R1a-fix1: fake ACL model (icacls effects + Get-Acl answers). Keys are lower-case full paths.
     Acl = @{}; AclStuck = @{}; AclHard = @{}; AclUnreadable = @{}
     # R1b-fix1: fake process table and restore task.
@@ -138,8 +140,13 @@ function Invoke-Fake($S, [string]$Root, [string]$Exe, [string]$Arguments) {
       return @{ ExitCode = 0; Output = $out }
     }
     'netstat.exe' {
-      $lines = foreach ($p in $S.Ports) { "  TCP    0.0.0.0:$p          0.0.0.0:0              LISTENING       1234" }
-      return @{ ExitCode = 0; Output = ("Active Connections`r`n  TCP    127.0.0.1:5000     127.0.0.1:47989       ESTABLISHED     1`r`n" + ($lines -join "`r`n")) }
+      if ($Arguments -ne '-ano') { throw "fake netstat: unexpected $Arguments" }
+      $lines = @(foreach ($p in $S.Ports) { "  TCP    0.0.0.0:$p          0.0.0.0:0              LISTENING       1234" })
+      $lines += @(foreach ($p in $S.Ports6) { "  TCP    [::]:$p             [::]:0                 LISTENING       1234" })
+      $lines += @(foreach ($p in $S.UdpPorts) { "  UDP    0.0.0.0:$p          *:*                                    1234" })
+      $lines += @(foreach ($p in $S.UdpPorts6) { "  UDP    [::]:$p             *:*                                    1234" })
+      $noise = "  TCP    127.0.0.1:5000     127.0.0.1:47989       ESTABLISHED     1`r`n  TCP    127.0.0.1:5001     127.0.0.1:45989       ESTABLISHED     1`r`n  UDP    127.0.0.1:45998    127.0.0.1:9           1`r`n"
+      return @{ ExitCode = 0; Output = ("Active Connections`r`n" + $noise + ($lines -join "`r`n")) }
     }
     'robocopy.exe' { return (Invoke-FakeRobocopy $Arguments $Root) }
     'schtasks.exe' {
@@ -201,7 +208,7 @@ function Get-TreeHash([string]$Dir) {
 # ---------------- T4 ----------------
 Invoke-Case 'plan' {
   New-VibepolloConfig $vib
-  $S.Usbip = $true; $S.SudoVda = $false; $S.Ports = @(47989, 47990)
+  $S.Usbip = $true; $S.SudoVda = $false; $S.Ports = @(47989, 45989, 45990)
   $v = Invoke-Plan
   Eq $v.apollo_installed 1 'plan apollo_installed'
   Eq $v.apollo_start 'auto' 'plan apollo_start'
@@ -210,7 +217,7 @@ Invoke-Case 'plan' {
   Eq $v.arbsh_installed 0 'plan arbsh_installed'
   Eq $v.usbip_present 1 'plan usbip'
   Eq $v.sudovda_present 0 'plan sudovda'
-  Eq $v.ports_busy '47989,47990' 'plan ports'
+  Eq $v.ports_busy '45989,45990' 'plan ports (NET2: new install = 45989 family, 47989 not checked)'
   Eq @(Mutations).Count 0 'plan runs no mutating command'
   Ok (-not (Test-Path -LiteralPath $data)) 'plan creates nothing under DataRoot'
 }
@@ -325,7 +332,7 @@ Invoke-Case 'ensure-config' {
   New-Item -ItemType Directory -Path (Join-Path $app 'config-template') -Force | Out-Null
   [IO.File]::WriteAllText((Join-Path $app 'config-template\sunshine.conf'), 'template')
   Eq (Invoke-EnsureConfig) 0 'ensure rc'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'config\sunshine.conf'))) 'template' 'new config from template'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'config\sunshine.conf'))) "template`nport = 45989`n" 'new config from template + port = 45989 (NET2)'
   [IO.File]::WriteAllText((Join-Path $app 'config\sunshine.conf'), 'user')
   Eq (Invoke-EnsureConfig) 0 'ensure rc 2'
   Eq ([IO.File]::ReadAllText((Join-Path $app 'config\sunshine.conf'))) 'user' 'existing config kept'
@@ -387,7 +394,7 @@ Invoke-Case 'start-conflict-auto' {
   Eq (Mutations) @('sc.exe config ARBSHService start= demand') 'deferred: ARBS-H manual, Vibepollo untouched'
 }
 Invoke-Case 'start-conflict-ports' {
-  $S.Services.Remove('ApolloService'); $S.Ports = @(47990)
+  $S.Services.Remove('ApolloService'); $S.Ports = @(45990)
   $S.Services['ARBSHService'] = @{ Start = 3; Delayed = $false; State = 'STOPPED'; Bin = 'x'; StopWorks = $true }
   Eq (Invoke-Start) 10 'ports busy: deferred'
 }
@@ -444,7 +451,8 @@ Invoke-Case 'post-install-first' {
   Eq $script:Result['start'] 'auto-started' 'first install: started'
   Eq $script:Result['credentials-acl'] 'ok' 'first install: migrated credentials already private'
   Eq $S.Services.ARBSHService.Start 2 'ARBSHService auto'; Eq $S.Services.ARBSHService.State 'RUNNING' 'ARBSHService running'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.3.0' 'version file'
+  Ok (-not ([IO.File]::ReadAllText((Join-Path $app 'config\sunshine.conf')) -match '(?m)^\s*port\s*=')) 'first install with migrate: no port line written (NET2)'
   Ok (-not ((Mutations) -match '^sc\.exe (delete|start) ApolloService|delete rule name="Vibepollo|VibepolloDisplayRestore|^pnputil\.exe /(delete|remove)')) 'Vibepollo service/rules/task/drivers never deleted'
 }
 
@@ -744,7 +752,7 @@ Invoke-Case 'h9-upgrade-from-0.1.1' {
   Eq (Invoke-Prepare) 0 'H9 upgrade prepare rc'
   Ok ($script:Result['prepare'] -match '^backup config-0\.1\.1-') 'H9 upgrade backup names the old version'
   Eq (Invoke-PostInstall) 0 'H9 upgrade post-install rc'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'H9 upgrade version file'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.3.0' 'H9 upgrade version file'
 }
 Invoke-Case 'h10-unreadable-path' {
   Initialize-FakeInstall
@@ -1161,7 +1169,7 @@ Invoke-Case 'p11-reason-one-line' {
 }
 
 # ---------------- H013: update, reinstall and uninstall of 0.1.3 (V1-V3; V4 is in l8 + T6) ----------------
-Invoke-Case 'v1-update-0.1.2-to-0.2.2' {
+Invoke-Case 'v1-update-0.1.2-to-0.3.0' {
   Initialize-FakeInstall
   [void]$S.Procs.Add((New-FakeProc 2201 'sunshine.exe' "$app\sunshine.exe"))
   Eq (Invoke-Prepare) 0 'V1 prepare rc'
@@ -1170,7 +1178,7 @@ Invoke-Case 'v1-update-0.1.2-to-0.2.2' {
   Ok ($script:Result['prepare'] -match '^backup config-0\.1\.2-') 'V1 backup names 0.1.2'
   $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
   Eq (Invoke-PostInstall) 0 'V1 post-install rc'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'V1 version file 0.2.2'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.3.0' 'V1 version file 0.3.0'
   Eq $script:Result['start'] 'auto-started' 'V1 auto-started'
   Ok (-not $script:Result.Contains('service-restore')) 'V1 no restore on success'
 }
@@ -1201,7 +1209,7 @@ Invoke-Case 'v3-uninstall-0.1.3-remove' {
 # The default web screen is the server setting arbs_webui_default (arbs/classic/v2). The installer never writes it:
 # an existing sunshine.conf is kept byte for byte, a missing key means the server default (arbs).
 $script:ConfUi1b = "locale = ko`r`ngamepad = usbip_ds5`r`nupdate_check_interval = 86400`r`nnotify_pre_releases = false`r`n"
-Invoke-Case 'w1-update-0.1.3-to-0.2.2' {
+Invoke-Case 'w1-update-0.1.3-to-0.3.0' {
   Initialize-FakeInstall
   [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.1.3')
   $conf = Join-Path $app 'config\sunshine.conf'
@@ -1213,7 +1221,7 @@ Invoke-Case 'w1-update-0.1.3-to-0.2.2' {
   $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
   Eq (Invoke-PostInstall) 0 'W1 post-install rc'
   Eq $script:Result['config'] 'kept' 'W1 config kept'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'W1 version file 0.2.2'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.3.0' 'W1 version file 0.3.0'
   Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before 'W1 sunshine.conf bytes unchanged'
   Ok (-not ([IO.File]::ReadAllText($conf)).Contains('arbs_webui_default')) 'W1 no arbs_webui_default written (server default arbs)'
   Eq $script:Result['start'] 'auto-started' 'W1 auto-started'
@@ -1243,13 +1251,13 @@ Invoke-Case 'w3-new-install-template-no-webui-key' {
   Eq $script:Result['config'] 'new-from-template' 'W3 config from template'
   $text = [IO.File]::ReadAllText((Join-Path $app 'config\sunshine.conf'))
   Ok (-not $text.Contains('arbs_webui_default')) 'W3 template has no arbs_webui_default (server default arbs)'
-  Eq (Get-FileHash -LiteralPath (Join-Path $app 'config\sunshine.conf') -Algorithm SHA256).Hash (Get-FileHash -LiteralPath $tpl -Algorithm SHA256).Hash 'W3 config = template bytes'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'config\sunshine.conf'))) ([IO.File]::ReadAllText($tpl) + "port = 45989`r`n") 'W3 config = template bytes + port = 45989 (NET2)'
 }
 
 # ---------------- H021: update 0.2.0 -> 0.2.1 (web assets and version only) keeps the configuration ----------------
 # The ARBS WebUI 0.2.1 hides some gamepad types and the "enabled" trigger status in its lists, but values that are
 # already set stay as they are: the installer keeps sunshine.conf byte for byte and writes no key.
-Invoke-Case 'w4-update-0.2.0-to-0.2.2' {
+Invoke-Case 'w4-update-0.2.0-to-0.3.0' {
   Initialize-FakeInstall
   [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.2.0')
   $conf = Join-Path $app 'config\sunshine.conf'
@@ -1262,7 +1270,7 @@ Invoke-Case 'w4-update-0.2.0-to-0.2.2' {
   $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
   Eq (Invoke-PostInstall) 0 'W4 post-install rc'
   Eq $script:Result['config'] 'kept' 'W4 config kept'
-  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' 'W4 version file 0.2.2'
+  Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.3.0' 'W4 version file 0.3.0'
   Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before 'W4 sunshine.conf bytes unchanged (hidden values kept)'
   Eq $script:Result['start'] 'auto-started' 'W4 auto-started'
 }
@@ -1275,7 +1283,7 @@ foreach ($c in @(
     @{ N = 'ttl-set'; Extra = "session_history_ttl_days = 0`r`n"; Pid = 2601 },
     @{ N = 'ttl-missing'; Extra = ''; Pid = 2602 })) {
   $global:W5 = $c
-  Invoke-Case "w5-update-0.2.1-to-0.2.2-$($c.N)" {
+  Invoke-Case "w5-update-0.2.1-to-0.3.0-$($c.N)" {
     $c = $global:W5
     Initialize-FakeInstall
     [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.2.1')
@@ -1288,7 +1296,7 @@ foreach ($c in @(
     $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
     Eq (Invoke-PostInstall) 0 "W5 $($c.N) post-install rc"
     Eq $script:Result['config'] 'kept' "W5 $($c.N) config kept"
-    Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.2.2' "W5 $($c.N) version file 0.2.2"
+    Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.3.0' "W5 $($c.N) version file 0.3.0"
     Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before "W5 $($c.N) sunshine.conf bytes unchanged"
     $ttl = @([IO.File]::ReadAllLines($conf) | Where-Object { $_ -match '^\s*session_history_ttl_days\s*=' })
     if ($c.Extra) {
@@ -1297,6 +1305,128 @@ foreach ($c in @(
       Eq $ttl.Count 0 "W5 $($c.N) no session_history_ttl_days written (server default 30)"
     }
     Eq $script:Result['start'] 'auto-started' "W5 $($c.N) auto-started"
+  }
+}
+
+# ---------------- NET2 (0.3.0): ports follow sunshine.conf (I1), new installs get port = 45989 (B) ----------------
+# The installer checks the ports of the configured base (TCP base-5, base, base+1, base+21 and UDP base+9..11) with one
+# netstat call. Only a configuration made from the template gets "port = 45989"; an existing or migrated one keeps its
+# bytes (no port line is ever added), so already paired clients keep working.
+Invoke-Case 'n1-read-conf-port' {
+  $dir = Join-Path $root 'n1'; New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  $f = Join-Path $dir 'sunshine.conf'
+  foreach ($c in @(
+      @{ T = "locale = ko`r`n"; W = 47989; N = 'no port line = server default' },
+      @{ T = "# port = 45000`r`nlocale = ko`r`n"; W = 47989; N = 'comment ignored' },
+      @{ T = "port = 45000`r`nport = 46000`r`n"; W = 45000; N = 'first line wins (server parse_config emplace)' },
+      @{ T = "  port   =   45989  `n"; W = 45989; N = 'spaces' },
+      @{ T = "port = `"45000`"`n"; W = 45000; N = 'quoted value' },
+      @{ T = "port = 1018`n"; W = 47989; N = '1018 ignored' },
+      @{ T = "port = 1019`n"; W = 1019; N = '1019 kept (server warns)' },
+      @{ T = "port = 1028`n"; W = 1028; N = '1028 kept (server warns)' },
+      @{ T = "port = 65514`n"; W = 65514; N = '65514 kept' },
+      @{ T = "port = 65515`n"; W = 47989; N = '65515 ignored' },
+      @{ T = "port = abc`nport = 45000`n"; W = 47989; N = 'first line not a number = default' },
+      @{ T = "portal = 45000`n"; W = 47989; N = 'other key' })) {
+    [IO.File]::WriteAllText($f, $c.T)
+    Eq (Read-ConfPort $f) $c.W "N1 $($c.N)"
+  }
+  Eq (Get-StreamPorts 45989).Tcp @(45984, 45989, 45990, 46010) 'N1 TCP ports of 45989'
+  Eq (Get-StreamPorts 45989).Udp @(45998, 45999, 46000) 'N1 UDP ports of 45989'
+  Eq (Get-StreamPorts 47989).Tcp @(47984, 47989, 47990, 48010) 'N1 TCP ports of 47989'
+  Eq (Get-StreamPorts 47989).Udp @(47998, 47999, 48000) 'N1 UDP ports of 47989'
+}
+Invoke-Case 'n2-configured-port-before-config' {
+  Eq (Get-ConfiguredPort) 45989 'N2 new install (no conf, no migrate) = 45989'
+  $Migrate = $true
+  Eq (Get-ConfiguredPort) 47989 'N2 migrate without a Vibepollo conf = 47989'
+  New-VibepolloConfig $vib
+  Eq (Get-ConfiguredPort) 47989 'N2 migrate, Vibepollo conf without port = 47989'
+  [IO.File]::AppendAllText((Join-Path $vib 'sunshine.conf'), "port = 47000`r`n")
+  Eq (Get-ConfiguredPort) 47000 'N2 migrate, Vibepollo conf port = 47000'
+  New-Item -ItemType Directory -Path (Join-Path $app 'config') -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $app 'config\sunshine.conf'), "port = 46500`r`n")
+  Eq (Get-ConfiguredPort) 46500 'N2 ARBS-H conf wins once it exists'
+  Eq @(Mutations).Count 0 'N2 reads only'
+}
+Invoke-Case 'n3-busy-ports-follow-conf' {
+  New-Item -ItemType Directory -Path (Join-Path $app 'config') -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $app 'config\sunshine.conf'), "locale = ko`r`nport = 45000`r`n")
+  $S.Ports = @(47989, 44995, 45001); $S.Ports6 = @(45021); $S.UdpPorts = @(47998, 45010); $S.UdpPorts6 = @(45011)
+  Eq (Get-BusyPorts) @(44995, 45001, 45021, 45010, 45011) 'N3 TCP4 + TCP6 + UDP4 + UDP6 of base 45000 only (47989/47998 ignored)'
+  Eq @($script:Plan | Where-Object { $_ -match '^netstat\.exe' }) @('netstat.exe -ano') 'N3 one netstat call for TCP and UDP'
+}
+Invoke-Case 'n4-udp-only-busy-defers-start' {
+  $S.Services.Remove('ApolloService'); $S.UdpPorts6 = @(45999)
+  $S.Services['ARBSHService'] = @{ Start = 3; Delayed = $false; State = 'STOPPED'; Bin = 'x'; StopWorks = $true }
+  Eq (Invoke-Start) 10 'N4 a UDP port in use: deferred'
+  Ok ("$($script:Result['start'])" -like 'deferred-conflict ports=45999 *') "N4 result names the UDP port ($($script:Result['start']))"
+  Eq (Mutations) @('sc.exe config ARBSHService start= demand') 'N4 ARBS-H left manual'
+}
+Invoke-Case 'n5-default-family-free-when-new-port' {
+  $S.Services.Remove('ApolloService'); $S.Ports = @(47984, 47989, 47990, 48010); $S.UdpPorts = @(47998, 47999, 48000)
+  $S.Services['ARBSHService'] = @{ Start = 3; Delayed = $false; State = 'STOPPED'; Bin = 'x'; StopWorks = $true }
+  New-Item -ItemType Directory -Path (Join-Path $app 'config') -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $app 'config\sunshine.conf'), "port = 45989`r`n")
+  Eq (Invoke-Start) 0 'N5 another host on 47984..48010 does not block ARBS-H on 45989'
+  Eq $script:Result['start'] 'auto-started' 'N5 started'
+}
+Invoke-Case 'n6-new-install-conf-gets-port' {
+  $tpl = Join-Path (Split-Path -Parent $TestDir) 'sunshine.conf'
+  $tplHash = (Get-FileHash -LiteralPath $tpl -Algorithm SHA256).Hash
+  New-Item -ItemType Directory -Path (Join-Path $app 'config-template') -Force | Out-Null
+  Copy-Item -LiteralPath $tpl -Destination (Join-Path $app 'config-template\sunshine.conf')
+  Eq (Invoke-EnsureConfig) 0 'N6 ensure-config rc'
+  Eq $script:Result['config'] 'new-from-template' 'N6 new config'
+  $conf = Join-Path $app 'config\sunshine.conf'
+  Eq ([IO.File]::ReadAllText($conf)) ([IO.File]::ReadAllText($tpl) + "port = 45989`r`n") 'N6 conf = template + one "port = 45989" line (CRLF)'
+  Eq @([IO.File]::ReadAllLines($conf) | Where-Object { $_ -match '^\s*port\s*=' }).Count 1 'N6 exactly one port line'
+  Eq (Read-ConfPort $conf) 45989 'N6 the server reads 45989'
+  Eq (Get-FileHash -LiteralPath $tpl -Algorithm SHA256).Hash $tplHash 'N6 template file unchanged'
+  Ok (-not (([IO.File]::ReadAllText($tpl)) -match '(?m)^\s*port\s*=')) 'N6 template itself has no port line'
+  [IO.File]::WriteAllText($conf, "user`r`n")
+  Eq (Invoke-EnsureConfig) 0 'N6 second run rc'
+  Eq ([IO.File]::ReadAllText($conf)) "user`r`n" 'N6 existing conf kept as is (no port line added)'
+}
+Invoke-Case 'n7-migrate-gets-no-port-line' {
+  New-VibepolloConfig $vib
+  New-Item -ItemType Directory -Path (Join-Path $app 'config-template') -Force | Out-Null
+  Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $TestDir) 'sunshine.conf') -Destination (Join-Path $app 'config-template\sunshine.conf')
+  $VibepolloStopApproved = $true
+  Eq (Invoke-StopVibepollo) 0 'N7 stop Vibepollo'
+  $Migrate = $true
+  Eq (Invoke-PostInstall) 0 'N7 post-install rc'
+  Eq $script:Result['migrate'] 'ok' 'N7 migrated'
+  Eq $script:Result['config'] 'kept' 'N7 template not used'
+  $conf = Join-Path $app 'config\sunshine.conf'
+  Eq @([IO.File]::ReadAllLines($conf) | Where-Object { $_ -match '^\s*port\s*=' }).Count 0 'N7 migrated conf has no port line (Vibepollo port, paired clients keep it)'
+  Eq (Read-ConfPort $conf) 47989 'N7 migrated ARBS-H runs on the Vibepollo port (default 47989)'
+}
+$script:ConfNet2 = "locale = ko`r`ngamepad = usbip_ds5`r`narbs_trigger_status = h2b`r`n"
+foreach ($c in @(
+    @{ N = 'port-set'; Extra = "port = 47989`r`n"; Pid = 2701; Port = 47989 },
+    @{ N = 'port-custom'; Extra = "port = 46100`r`n"; Pid = 2702; Port = 46100 },
+    @{ N = 'port-missing'; Extra = ''; Pid = 2703; Port = 47989 })) {
+  $global:N8 = $c
+  Invoke-Case "n8-update-0.2.2-to-0.3.0-$($c.N)" {
+    $c = $global:N8
+    Initialize-FakeInstall
+    [IO.File]::WriteAllText((Join-Path $app 'arbs-h-version.txt'), '0.2.2')
+    $conf = Join-Path $app 'config\sunshine.conf'
+    [IO.File]::WriteAllText($conf, $script:ConfNet2 + $c.Extra)
+    $before = (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash
+    $lines = @([IO.File]::ReadAllLines($conf) | Where-Object { $_ -match '^\s*port\s*=' }).Count
+    [void]$S.Procs.Add((New-FakeProc $c.Pid 'sunshine.exe' "$app\sunshine.exe"))
+    Eq (Invoke-Prepare) 0 "N8 $($c.N) prepare rc"
+    Ok ($script:Result['prepare'] -match '^backup config-0\.2\.2-') "N8 $($c.N) backup names 0.2.2"
+    $PrevStart = $script:Result['service-start-before']; $PrevState = $script:Result['service-before']
+    Eq (Invoke-PostInstall) 0 "N8 $($c.N) post-install rc"
+    Eq $script:Result['config'] 'kept' "N8 $($c.N) config kept"
+    Eq ([IO.File]::ReadAllText((Join-Path $app 'arbs-h-version.txt'))) '0.3.0' "N8 $($c.N) version file 0.3.0"
+    Eq (Get-FileHash -LiteralPath $conf -Algorithm SHA256).Hash $before "N8 $($c.N) sunshine.conf bytes unchanged"
+    Eq @([IO.File]::ReadAllLines($conf) | Where-Object { $_ -match '^\s*port\s*=' }).Count $lines "N8 $($c.N) no port line added"
+    Eq (Get-ConfiguredPort) $c.Port "N8 $($c.N) ports checked for $($c.Port)"
+    Eq $script:Result['start'] 'auto-started' "N8 $($c.N) auto-started"
   }
 }
 
@@ -1346,12 +1476,12 @@ $fake = @(
   @{ match = '^sc\.exe (qc|query) ARBSHService'; exit = 1060; output = '1060' },
   @{ match = '^sc\.exe query usbip2_ude'; exit = 0; output = 'RUNNING' },
   @{ match = '^pnputil'; exit = 0; output = 'Device Description: SudoMaker Virtual Display Adapter' },
-  @{ match = '^netstat'; exit = 0; output = '  TCP    0.0.0.0:47989          0.0.0.0:0              LISTENING       9' })
+  @{ match = '^netstat'; exit = 0; output = "  TCP    0.0.0.0:47989          0.0.0.0:0              LISTENING       9`r`n  TCP    0.0.0.0:45989          0.0.0.0:0              LISTENING       9`r`n  UDP    [::]:45999             *:*                                    9" })
 ($fake | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $cli 'fake.json') -Encoding UTF8
 $planFile = Join-Path $cli 'plan.txt'
 & $ps -NoProfile -ExecutionPolicy Bypass -File $Helper -Action plan -DryRun -FakeRoot $cli -AppDir (Join-Path $cli 'app') -DataRoot (Join-Path $cli 'ProgramData\ARBS-H') -PlanOut $planFile | Out-Null
 Eq $LASTEXITCODE 0 'CLI -DryRun plan exit 0'
-Eq (Get-Content -LiteralPath $planFile) @('apollo_installed=1', 'apollo_start=auto', 'apollo_state=RUNNING', 'vibepollo_config=', 'arbsh_installed=0', 'arbsh_config=0', 'usbip_present=1', 'sudovda_present=1', 'ports_busy=47989', 'rollback_record=1') 'CLI -DryRun -FakeRoot plan output (fake.json)'
+Eq (Get-Content -LiteralPath $planFile) @('apollo_installed=1', 'apollo_start=auto', 'apollo_state=RUNNING', 'vibepollo_config=', 'arbsh_installed=0', 'arbsh_config=0', 'usbip_present=1', 'sudovda_present=1', 'ports_busy=45989,45999', 'rollback_record=1') 'CLI -DryRun -FakeRoot plan output (fake.json, NET2: 45989 family, TCP + UDP)'
 $ErrorActionPreference = 'Continue'
 & $ps -NoProfile -ExecutionPolicy Bypass -File $Helper -Action plan -DryRun -FakeRoot $cli -AppDir 'C:\Program Files\ARBS-H' -PlanOut (Join-Path $cli 'x.txt') 2>$null | Out-Null
 $refused = $LASTEXITCODE

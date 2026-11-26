@@ -23,7 +23,7 @@ param(
   [string]$AppDir = (Join-Path $env:ProgramFiles 'ARBS-H'),
   [string]$DataRoot = (Join-Path $env:ProgramData 'ARBS-H'),
   [string]$VibepolloConfig = '',
-  [string]$Version = '0.2.2',
+  [string]$Version = '0.3.0',
   # H013 O4: ARBS-H service start type and state seen by the first prepare (auto|delayed-auto|demand|disabled|none and
   # an sc.exe state). Plain strings on purpose: an unexpected value must not stop post-install at parameter binding.
   [string]$PrevStart = '',
@@ -57,7 +57,11 @@ $script:FirewallRules = @(
   @{ Name = 'ARBS-H Service'; Program = 'tools\sunshinesvc.exe' }
 )
 $script:RestoreTask = '\ARBS-H-DisplayRestore'
-$script:StreamPorts = @(47984, 47989, 47990, 48010)
+# NET2 (0.3.0): the ports follow the base port of sunshine.conf (Get-ConfiguredPort); there is no fixed list any more.
+# A new configuration made from the template gets port = 45989 (ARBS-H's own port family, Invoke-EnsureConfig); an
+# existing or migrated configuration is never given a port line. The server default without a line stays 47989.
+$script:ArbsDefaultPort = 45989
+$script:ServerDefaultPort = 47989
 $script:MigrateFiles = @('sunshine.conf', 'apps.json', 'sunshine_state.json', 'vibeshine_state.json')
 $script:BackupKeep = 3
 
@@ -253,14 +257,51 @@ function Test-SudoVdaPresent {
   return ($r.ExitCode -eq 0 -and $r.Output -match '(?i)SudoMaker Virtual Display|SUDOVDA')
 }
 
-function Get-BusyPorts {
-  $r = Invoke-Ext 'netstat.exe' '-ano -p TCP'
+# Base port of a sunshine.conf, read the way the server does (src/config.cpp): the first non-comment "port =" line
+# wins, a value outside 1019..65514 (or not a number) is ignored and the server default 47989 is used.
+function Read-ConfPort([string]$Path) {
+  foreach ($line in [IO.File]::ReadAllLines($Path)) {
+    if ($line -match '^\s*#') { continue }
+    if ($line -match '^\s*port\s*=\s*(.*?)\s*$') {
+      $value = $matches[1].Trim('"')
+      if ($value -match '^\d{1,5}$' -and [int]$value -ge 1019 -and [int]$value -le 65514) { return [int]$value }
+      return $script:ServerDefaultPort
+    }
+  }
+  return $script:ServerDefaultPort
+}
+
+# Base port ARBS-H runs (or will run) with: the ARBS-H sunshine.conf if it exists; before it exists (plan, or a new
+# install before ensure-config) the value it will get: Vibepollo's port when -Migrate copies Vibepollo's conf, otherwise
+# the new-install port 45989.
+function Get-ConfiguredPort {
+  $conf = Join-Path $AppDir 'config\sunshine.conf'
+  if (Test-Path -LiteralPath $conf) { return (Read-ConfPort $conf) }
+  if ($Migrate) {
+    $vconf = Join-Path (Get-VibepolloConfigDir (Get-ServiceInfo $script:VibepolloService)) 'sunshine.conf'
+    if (Test-PathInScope $vconf) { return (Read-ConfPort $vconf) }
+    return $script:ServerDefaultPort
+  }
+  return $script:ArbsDefaultPort
+}
+
+# Ports ARBS-H opens for a base port (src/network.cpp map_port): TCP base-5, base, base+1 (web UI), base+21 and
+# UDP base+9..11. The two sets never share a number, so ports_busy stays a plain number list.
+function Get-StreamPorts([int]$Base) {
+  return @{ Tcp = @(($Base - 5), $Base, ($Base + 1), ($Base + 21)); Udp = @(($Base + 9), ($Base + 10), ($Base + 11)) }
+}
+
+# One netstat call (TCP and UDP, IPv4 and IPv6): a listening TCP socket has the remote port 0, a bound UDP socket *:*.
+function Get-BusyPorts([int]$Base = 0) {
+  if ($Base -le 0) { $Base = Get-ConfiguredPort }
+  $ports = Get-StreamPorts $Base
+  $r = Invoke-Ext 'netstat.exe' '-ano'
   $busy = @()
   foreach ($line in ($r.Output -split "`r?`n")) {
-    if ($line -match '^\s*TCP\s+\S+:(\d+)\s+\S+:0\s+') {
-      $port = [int]$matches[1]
-      if ($script:StreamPorts -contains $port -and $busy -notcontains $port) { $busy += $port }
-    }
+    $port = 0
+    if ($line -match '^\s*TCP\s+\S+:(\d+)\s+\S+:0\s+') { if ($ports.Tcp -contains [int]$matches[1]) { $port = [int]$matches[1] } }
+    elseif ($line -match '^\s*UDP\s+\S+:(\d+)\s+\*:\*') { if ($ports.Udp -contains [int]$matches[1]) { $port = [int]$matches[1] } }
+    if ($port -gt 0 -and $busy -notcontains $port) { $busy += $port }
   }
   return , $busy
 }
@@ -499,7 +540,13 @@ function Invoke-EnsureConfig {
   $template = Join-Path $AppDir 'config-template\sunshine.conf'
   if (-not (Test-Path -LiteralPath $template)) { Set-Result 'config' 'template-missing'; return 1 }
   if (-not (Test-Path -LiteralPath $target)) { New-Item -ItemType Directory -Path $target -Force | Out-Null }
-  Copy-Item -LiteralPath $template -Destination $conf
+  # NET2 (0.3.0): only a configuration made here (new install) gets ARBS-H's own port family. The template file itself
+  # stays without a port line; existing and migrated configurations are never changed.
+  $text = [IO.File]::ReadAllText($template)
+  $nl = Get-NewLine $text
+  if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) { $text += $nl }
+  $text += ('port = {0}' -f $script:ArbsDefaultPort) + $nl
+  [IO.File]::WriteAllText($conf, $text, (New-Object Text.UTF8Encoding($false)))
   Set-Result 'config' 'new-from-template'
   return 0
 }
