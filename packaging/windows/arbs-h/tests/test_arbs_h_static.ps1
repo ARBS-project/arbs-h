@@ -337,7 +337,9 @@ Ok ($chText.Contains('WEB_DIR "images/arbs-favicon.ico"') -and $chText.Contains(
 $webRoot = Join-Path $srcRoot 'src_assets\common\assets'
 $oldRefs = @()
 foreach ($ui in @('web-arbs', 'web-legacy', 'web')) {
-  $oldRefs += @(Get-ChildItem -LiteralPath (Join-Path $webRoot $ui) -Recurse -File -Include *.vue, *.html, *.ts |
+  # Screen sources only (.vue / .html / .ts); -Include does not filter with -LiteralPath on PowerShell 5, so filter here.
+  $oldRefs += @(Get-ChildItem -LiteralPath (Join-Path $webRoot $ui) -Recurse -File |
+      Where-Object { @('.vue', '.html', '.ts') -contains $_.Extension } |
       Where-Object { $_.FullName -notmatch '\\node_modules\\|\\scripts\\|\\dist\\' } |
       Where-Object { (Select-String -LiteralPath $_.FullName -Pattern 'logo-apollo|apollo\.ico|sunshine\.ico' -Quiet) } |
       ForEach-Object { $_.Name })

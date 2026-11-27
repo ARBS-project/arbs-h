@@ -1018,7 +1018,9 @@ try {
     // favicon sheet: the files the three web screens use, at 16 / 32 / 48 and x4
     await ip.setContent(`<!doctype html><body style="margin:0;padding:12px;font:13px sans-serif;display:grid;grid-template-columns:repeat(2,auto);gap:12px 32px;background:#fff">
       ${[
-        ['ARBS WebUI favicon.ico', `${base}/arbs/images/favicon.ico`],
+        // "?sheet=1": with Playwright request routing on, an <img> whose URL ends exactly in "favicon.ico" does not load
+        // (harness behaviour, checked with and without routing); the file itself is checked above (200, image/x-icon).
+        ['ARBS WebUI favicon.ico', `${base}/arbs/images/favicon.ico?sheet=1`],
         ['ARBS WebUI icon.svg', `${base}/arbs/images/icon.svg`],
         ['ARBS WebUI apple-touch-icon.png', `${base}/arbs/images/apple-touch-icon.png`],
         ['v1 / v2 arbs-favicon.ico (/images/)', `${base}/images/arbs-favicon.ico`],
