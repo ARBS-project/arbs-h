@@ -2,11 +2,16 @@
 // ARBS-H 0.3.0 (NET2): "외부 접속" wizard, docs/analysis/NET2.md §3 (steps 0..5; 3a Tailscale, 3b port forwarding,
 // 3c UPnP, 3d port change). Only the WIZARD_KEYS are PATCHed, the value before is shown next to every change and step 5
 // puts it back. Addresses are hidden (●●●) and shown only while "보기" is held: never stored, logged or sent.
+// 0.3.1 (H031, docs/analysis/H031.md §1-2): one "보기" component for every address (pointer captured while pressed),
+// 3b = router settings only, 4 = "밖에서 접속" (router's outside address read-only from the router or typed in, value for
+// Moonlight, PIN, new pairing off, result), 5 = "마무리" (summary; changed settings only inside a closed advanced box).
+// Step IDs are unchanged (bookmarks and the ?step=5&prev_port= link after a port change keep working).
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
 import { apiGet, apiPatch } from '@/api/client';
+import HoldReveal from '@/components/HoldReveal.vue';
 import ReasonText from '@/components/ReasonText.vue';
 import RemoteDiagram from '@/components/RemoteDiagram.vue';
 import type { PatchResult } from '@/logic/config';
@@ -17,24 +22,30 @@ import {
   checks,
   DEFAULT_PORT,
   diagnosticsFromConfig,
+  easyValue,
   EXTERNAL_CHECK_URL,
+  finishSummary,
   hostKind,
   MASK,
   moonlightAddress,
   neverOpen,
   newWebUiUrl,
   originOf,
+  outsideValue,
   overlapsSunshineDefault,
   parsePrevPort,
   parseStep,
+  parseVia,
+  PROGRESS_KEY,
   readChanges,
   readDiagnostics,
+  readProgress,
+  readRouterWan,
   recommend,
   recordChange,
   restoreBlockReason,
   ROUTER_GUIDE_LINKS,
   serverBool,
-  shown,
   STACKON_GUIDE_URL,
   STEPS,
   streamPorts,
@@ -46,7 +57,10 @@ import {
   type Answer,
   type Change,
   type Diagnostics,
+  type Progress,
+  type RouterWan,
   type Step,
+  type Via,
   type WizardKey,
 } from '@/logic/remote';
 import { useHostStore } from '@/stores/host';
@@ -62,13 +76,15 @@ const config = ref<Record<string, unknown>>({});
 const diag = ref<Diagnostics | null>(null);
 const loading = ref(false);
 const busy = ref('');
-const revealed = ref(false);
 const restartNeeded = ref(false);
 const movedTo = ref<{ url: string; port: number } | null>(null);
 const routerAnswer = ref<Answer>('unknown');
 const wanAnswer = ref<Answer>('unknown');
-const result = ref<'' | 'ok' | 'fail'>('');
 const newPort = ref(String(ARBS_PORT));
+// Router's outside address: screen memory only (never stored, put in the address bar or logged).
+const wan = ref<RouterWan | null>(null);
+const wanAsking = ref(false);
+const manual = ref('');
 
 function storage(): Storage | null {
   try {
@@ -79,8 +95,12 @@ function storage(): Storage | null {
 }
 const changes = ref<Change[]>(readChanges(storage()?.getItem(CHANGES_KEY) ?? null));
 watch(changes, (list) => storage()?.setItem(CHANGES_KEY, JSON.stringify(list)), { deep: true });
+// Method and result only (no address): kept for the "마무리" summary.
+const progress = ref<Progress>(readProgress(storage()?.getItem(PROGRESS_KEY) ?? null));
+watch(progress, (p) => storage()?.setItem(PROGRESS_KEY, JSON.stringify(p)), { deep: true });
 
 const step = computed<Step>(() => parseStep(route.query.step));
+const via = computed<Via>(() => parseVia(route.query.via) ?? progress.value.via);
 const base = computed(() => diag.value?.port ?? DEFAULT_PORT);
 const where = computed(() => hostKind(window.location.hostname));
 const list = computed(() => (diag.value ? checks(diag.value, where.value) : []));
@@ -91,7 +111,6 @@ const originWan = computed(() => diag.value?.originWan ?? originOf(config.value)
 const upnpOn = computed(() => serverBool(config.value.upnp, false));
 const pairingOn = computed(() => serverBool(config.value.enable_pairing, true));
 const lanEnc = computed(() => raw('lan_encryption_mode') || '0');
-const wanEnc = computed(() => raw('wan_encryption_mode') || '1');
 const upnpReason = computed(() => upnpBlockReason(originWan.value));
 const tailnet = computed(() => {
   const all = diag.value?.interfaces ?? [];
@@ -101,6 +120,11 @@ const local = computed(() => diag.value?.interfaces.find((i) => i.kind === 'priv
 const portCheck = computed(() => checkPort(newPort.value, base.value));
 const preview = computed(() => (portCheck.value.error === null && portCheck.value.port !== null ? streamPorts(portCheck.value.port) : null));
 const guides = computed(() => ROUTER_GUIDE_LINKS.map((g) => ({ ...g, label: t(`remote.g_${g.id}`) })));
+const wanPublic = computed(() => wan.value?.state === 'ok' && wan.value.kind === 'public' && wan.value.address !== null);
+const wanNotPublic = computed(() => wan.value?.state === 'ok' && (wan.value.kind === 'private' || wan.value.kind === 'cgnat'));
+const manualOut = computed(() => outsideValue(manual.value, base.value));
+const summary = computed(() => finishSummary(progress.value, base.value, pairingOn.value));
+const prevPortLink = computed(() => parsePrevPort(route.query.prev_port) !== null);
 
 function raw(key: WizardKey): string {
   const value = config.value[key];
@@ -112,11 +136,13 @@ function revertReason(c: Change): string | null {
   return restoreBlockReason(c.key, c.before, config.value, diag.value?.originWan ?? false);
 }
 
+/** Plain words for a setting value (0.3.1: never the raw config word on the screen). */
 function valueText(key: WizardKey, value: string): string {
-  if (value === '') return t('remote.v_none');
-  if (key === 'upnp' || key === 'enable_pairing') return serverBool(value, false) ? t('remote.v_enabled') : t('remote.v_disabled');
-  return value;
+  const v = easyValue(key, value);
+  return 'text' in v ? t(v.text) : v.raw;
 }
+
+const forMoonlight = (plain: string): string => moonlightAddress(plain, base.value);
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -134,9 +160,42 @@ async function load(): Promise<void> {
   }
 }
 
-function go(next: Step): void {
-  void router.replace({ path: '/remote', query: { ...route.query, step: next } });
+/** P-4: asked once when step 4 opens (not for Tailscale) and again with "다시 물어보기". Read only, no mapping. */
+async function askRouter(): Promise<void> {
+  if (wanAsking.value) return;
+  wanAsking.value = true;
+  try {
+    wan.value = readRouterWan(await apiGet<unknown>('/api/network/router-wan', { signal: AbortSignal.timeout(10000) }));
+  } catch {
+    wan.value = { state: 'error', kind: 'unknown', address: null };
+  } finally {
+    wanAsking.value = false;
+  }
+}
+
+watch(
+  () => [step.value, via.value] as const,
+  ([s, v], old) => {
+    const entered = !old || old[0] !== '4';
+    if (s === '4' && v !== 'tailscale' && entered) void askRouter();
+  },
+  { immediate: true },
+);
+
+function go(next: Step, nextVia?: Via): void {
+  const query: Record<string, string> = {};
+  for (const [k, v] of Object.entries(route.query)) if (typeof v === 'string') query[k] = v;
+  query.step = next;
+  if (nextVia) {
+    query.via = nextVia;
+    progress.value = { ...progress.value, via: nextVia };
+  }
+  void router.replace({ path: '/remote', query });
   window.scrollTo(0, 0);
+}
+
+function setResult(r: 'ok' | 'fail'): void {
+  progress.value = { ...progress.value, via: via.value, result: r };
 }
 
 /** One wizard change (or "이전 값으로"): PATCH the key, remember the first value before it. */
@@ -168,19 +227,6 @@ async function change(key: WizardKey, value: string, restore = false): Promise<v
   } finally {
     busy.value = '';
   }
-}
-
-async function copy(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-    ui.say(t('remote.copied'));
-  } catch {
-    ui.say(t('remote.copy_failed'), 'error');
-  }
-}
-
-function hold(on: boolean): void {
-  revealed.value = on;
 }
 
 onMounted(async () => {
@@ -300,17 +346,17 @@ onMounted(async () => {
         <div class="card remote__method" data-method="tailscale">
           <h3 class="card__title">{{ t('remote.m_tailscale') }}</h3>
           <p class="muted">{{ t('remote.m_tailscale_text') }}</p>
-          <button class="button button--primary" type="button" @click="go('3a')">{{ t('remote.go_3a') }}</button>
+          <button class="button button--primary" type="button" @click="go('3a', 'tailscale')">{{ t('remote.go_3a') }}</button>
         </div>
         <div class="card remote__method" data-method="forward">
           <h3 class="card__title">{{ t('remote.m_forward') }}</h3>
           <p class="muted">{{ t('remote.m_forward_text') }}</p>
-          <button class="button button--ghost" type="button" @click="go('3b')">{{ t('remote.go_3b') }}</button>
+          <button class="button button--ghost" type="button" @click="go('3b', 'forward')">{{ t('remote.go_3b') }}</button>
         </div>
         <div class="card remote__method" data-method="upnp">
           <h3 class="card__title">{{ t('remote.m_upnp') }}</h3>
           <p class="muted">{{ t('remote.m_upnp_text') }}</p>
-          <button class="button button--ghost" type="button" @click="go('3c')">{{ t('remote.go_3c') }}</button>
+          <button class="button button--ghost" type="button" @click="go('3c', 'upnp')">{{ t('remote.go_3c') }}</button>
         </div>
         <div class="card remote__method" data-method="port">
           <h3 class="card__title">{{ t('remote.m_port') }}</h3>
@@ -334,27 +380,7 @@ onMounted(async () => {
         </li>
         <li>
           {{ t('remote.s3a_2') }}
-          <div v-if="tailnet" class="remote__address" data-tailnet>
-            <span class="muted">{{ t('remote.addr_label') }}</span>
-            <code data-address>{{ moonlightAddress(revealed ? tailnet.address.reveal() : MASK, base) }}</code>
-            <button
-              class="button button--ghost"
-              type="button"
-              data-reveal
-              @pointerdown="hold(true)"
-              @pointerup="hold(false)"
-              @pointerleave="hold(false)"
-              @pointercancel="hold(false)"
-              @keydown.enter.space.prevent="hold(true)"
-              @keyup="hold(false)"
-              @blur="hold(false)"
-            >
-              {{ t('remote.show') }}
-            </button>
-            <button class="button button--ghost" type="button" data-copy @click="copy(moonlightAddress(tailnet.address.reveal(), base))">
-              {{ t('remote.copy') }}
-            </button>
-          </div>
+          <HoldReveal v-if="tailnet" data-tailnet :value="tailnet.address" :label="t('remote.addr_label')" :format="forMoonlight" copy />
           <p v-else class="banner banner--warn" data-tailnet-none>{{ t('remote.s3a_no_addr') }}</p>
           <p v-if="base !== DEFAULT_PORT" class="muted" data-port-suffix>{{ t('remote.port_suffix_note', { port: base }) }}</p>
           <p class="muted">{{ t('remote.share_warning') }}</p>
@@ -372,7 +398,7 @@ onMounted(async () => {
       <div class="divider"></div>
       <h3 class="card__title">{{ t('remote.s3a_enc_title') }}</h3>
       <p class="muted">{{ t('remote.s3a_enc') }}</p>
-      <p data-lan-enc>{{ t('remote.now_value', { value: lanEnc }) }}</p>
+      <p data-lan-enc>{{ t('remote.now_value', { value: valueText('lan_encryption_mode', lanEnc) }) }}</p>
       <div class="row">
         <button
           v-if="lanEnc === '0'"
@@ -397,35 +423,19 @@ onMounted(async () => {
       </div>
       <div class="row">
         <button class="button button--ghost" type="button" @click="go('2')">{{ t('remote.back') }}</button>
-        <button class="button button--primary" type="button" @click="go('4')">{{ t('remote.next') }}</button>
+        <button class="button button--primary" type="button" data-next-4 @click="go('4', 'tailscale')">{{ t('remote.next_4') }}</button>
       </div>
     </section>
 
-    <!-- 3b port forwarding -->
+    <!-- 3b port forwarding: router settings only (H031 F2) -->
     <section v-if="step === '3b'" class="card" data-remote-step="3b">
       <h2 class="card__title">{{ t('remote.s3b_title') }}</h2>
+      <p class="banner banner--ok" data-3b-lead>{{ t('remote.s3b_lead') }}</p>
       <RemoteDiagram kind="forward" />
       <ol class="steps">
         <li>
           {{ t('remote.s3b_1') }}
-          <div v-if="local" class="remote__address" data-local>
-            <span class="muted">{{ t('remote.s3b_local') }}</span>
-            <code data-address>{{ shown(local.address, revealed) }}</code>
-            <button
-              class="button button--ghost"
-              type="button"
-              data-reveal
-              @pointerdown="hold(true)"
-              @pointerup="hold(false)"
-              @pointerleave="hold(false)"
-              @pointercancel="hold(false)"
-              @keydown.enter.space.prevent="hold(true)"
-              @keyup="hold(false)"
-              @blur="hold(false)"
-            >
-              {{ t('remote.show') }}
-            </button>
-          </div>
+          <HoldReveal v-if="local" data-local :value="local.address" :label="t('remote.s3b_local')" />
         </li>
         <li>
           {{ t('remote.s3b_2') }}
@@ -453,51 +463,23 @@ onMounted(async () => {
             </table>
           </div>
         </li>
-        <li>{{ t('remote.s3b_3') }}</li>
-        <li>{{ base === DEFAULT_PORT ? t('remote.s3b_addr_default') : t('remote.s3b_addr_port', { port: base }) }}</li>
+        <li data-3b-double>
+          {{ t('remote.s3b_3') }}
+          <h3 class="card__title">{{ t('remote.s3b_guides') }}</h3>
+          <ul class="remote__guides">
+            <li v-for="g in guides" :key="g.id">
+              <a :href="g.url" target="_blank" rel="noopener noreferrer" :data-guide="g.id">{{ g.label }}</a>
+            </li>
+            <li v-if="STACKON_GUIDE_URL">
+              <a :href="STACKON_GUIDE_URL" target="_blank" rel="noopener noreferrer" data-guide="stackon">{{ t('remote.g_stackon') }}</a>
+            </li>
+          </ul>
+          <p class="muted">{{ t('remote.s3b_guides_other') }}</p>
+        </li>
       </ol>
-      <h3 class="card__title">{{ t('remote.s3b_guides') }}</h3>
-      <ul class="remote__guides">
-        <li v-for="g in guides" :key="g.id">
-          <a :href="g.url" target="_blank" rel="noopener noreferrer" :data-guide="g.id">{{ g.label }}</a>
-        </li>
-        <li v-if="STACKON_GUIDE_URL">
-          <a :href="STACKON_GUIDE_URL" target="_blank" rel="noopener noreferrer" data-guide="stackon">{{ t('remote.g_stackon') }}</a>
-        </li>
-      </ul>
-      <p class="muted">{{ t('remote.s3b_guides_other') }}</p>
-      <div class="divider"></div>
-      <h3 class="card__title">{{ t('remote.s3b_pairing_title') }}</h3>
-      <p class="muted">{{ t('remote.s3b_pairing') }}</p>
-      <p data-pairing>{{ t('remote.now_value', { value: pairingOn ? t('remote.v_enabled') : t('remote.v_disabled') }) }}</p>
-      <p v-if="changes.some((c) => c.key === 'enable_pairing')" class="muted">
-        {{ t('remote.before_value', { value: valueText('enable_pairing', changes.find((c) => c.key === 'enable_pairing')!.before) }) }}
-      </p>
-      <div class="row">
-        <button
-          v-if="pairingOn"
-          class="button button--ghost"
-          type="button"
-          :disabled="!!busy || !host.online"
-          data-action="pairing-off"
-          @click="change('enable_pairing', 'disabled')"
-        >
-          {{ t('remote.pairing_off') }}
-        </button>
-        <button
-          v-else
-          class="button button--ghost"
-          type="button"
-          :disabled="!!busy || !host.online"
-          data-action="pairing-on"
-          @click="change('enable_pairing', 'enabled')"
-        >
-          {{ t('remote.pairing_on') }}
-        </button>
-      </div>
       <div class="row">
         <button class="button button--ghost" type="button" @click="go('2')">{{ t('remote.back') }}</button>
-        <button class="button button--primary" type="button" @click="go('4')">{{ t('remote.next') }}</button>
+        <button class="button button--primary" type="button" data-next-4 @click="go('4', 'forward')">{{ t('remote.next_4') }}</button>
       </div>
     </section>
 
@@ -548,7 +530,7 @@ onMounted(async () => {
       <ReasonText id="reason-upnp" :reason="upnpOn ? null : upnpReason" />
       <div class="row">
         <button class="button button--ghost" type="button" @click="go('2')">{{ t('remote.back') }}</button>
-        <button class="button button--primary" type="button" @click="go('4')">{{ t('remote.next') }}</button>
+        <button class="button button--primary" type="button" data-next-4 @click="go('4', 'upnp')">{{ t('remote.next_4') }}</button>
       </div>
     </section>
 
@@ -614,92 +596,217 @@ onMounted(async () => {
       </div>
       <div class="row">
         <button class="button button--ghost" type="button" @click="go('2')">{{ t('remote.back') }}</button>
-        <button class="button button--primary" type="button" @click="go('4')">{{ t('remote.next') }}</button>
+        <button class="button button--primary" type="button" @click="go('4')">{{ t('remote.next_4') }}</button>
       </div>
     </section>
 
-    <!-- 4 try -->
-    <section v-if="step === '4'" class="card" data-remote-step="4">
+    <!-- 4 try from outside (H031 F3) -->
+    <section v-if="step === '4'" class="card" data-remote-step="4" :data-via="via">
       <h2 class="card__title">{{ t('remote.s4_title') }}</h2>
-      <p>{{ t('remote.s4_1') }}</p>
-      <p>{{ t('remote.s4_q') }}</p>
+      <ol class="steps">
+        <li data-s4="network">{{ t('remote.s4_1') }}</li>
+        <li data-s4="value">
+          {{ t('remote.s4_2') }}
+          <template v-if="via === 'tailscale'">
+            <HoldReveal v-if="tailnet" data-s4-tailnet :value="tailnet.address" :label="t('remote.s4_value_label')" :format="forMoonlight" copy />
+            <p v-else class="banner banner--warn" data-tailnet-none>{{ t('remote.s3a_no_addr') }}</p>
+            <p v-if="base !== DEFAULT_PORT" class="muted" data-port-suffix>{{ t('remote.port_suffix_note', { port: base }) }}</p>
+          </template>
+          <template v-else>
+            <p class="muted" data-wan-note>{{ t('remote.s4_wan_note') }}</p>
+            <p v-if="wanAsking" class="muted" data-wan-state="asking" role="status">{{ t('remote.s4_wan_asking') }}</p>
+            <template v-else-if="wanPublic && wan">
+              <p class="muted" data-wan-state="ok" role="status">{{ t('remote.s4_wan_ok') }}</p>
+              <HoldReveal data-wan-address :value="wan.address" :label="t('remote.s4_wan_label')" />
+              <HoldReveal data-outside-value :value="wan.address" :label="t('remote.s4_value_label')" :format="forMoonlight" copy />
+            </template>
+            <template v-else-if="wanNotPublic">
+              <div class="banner banner--warn" data-wan-state="private" role="status">
+                <p>{{ t('remote.s4_wan_private') }}</p>
+                <p>{{ t('remote.s4_wan_private_help') }}</p>
+                <div class="row">
+                  <button class="button button--ghost" type="button" data-go-3b @click="go('3b', 'forward')">{{ t('remote.s4_go_3b') }}</button>
+                  <button class="button button--ghost" type="button" data-go-3a @click="go('3a', 'tailscale')">{{ t('remote.go_3a') }}</button>
+                </div>
+              </div>
+            </template>
+            <p v-else-if="wan" class="banner banner--warn" data-wan-state="none" role="status">{{ t('remote.s4_wan_none') }}</p>
+            <div class="row">
+              <button class="button button--ghost" type="button" :disabled="wanAsking" data-action="wan-retry" @click="askRouter()">
+                {{ t('remote.s4_retry') }}
+              </button>
+            </div>
+            <div v-if="!wanAsking && wan && !wanPublic" class="remote__manual" data-manual>
+              <h3 class="card__title">{{ t('remote.s4_manual_title') }}</h3>
+              <p class="muted">{{ t('remote.s4_manual_help') }}</p>
+              <template v-if="EXTERNAL_CHECK_URL">
+                <p class="muted">{{ t('remote.s4_check_consent') }}</p>
+                <a :href="EXTERNAL_CHECK_URL" target="_blank" rel="noopener noreferrer" data-external-check>{{ t('remote.s4_check_link') }}</a>
+              </template>
+              <label class="field">
+                <span>{{ t('remote.s4_manual_field') }}</span>
+                <input
+                  v-model="manual"
+                  class="input"
+                  type="text"
+                  inputmode="url"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  :placeholder="t('remote.s4_manual_placeholder')"
+                  data-field="outside-address"
+                  :aria-invalid="manualOut.error && manualOut.error !== 'empty' ? 'true' : undefined"
+                  :aria-describedby="manualOut.error && manualOut.error !== 'empty' ? 'reason-outside' : undefined"
+                />
+              </label>
+              <p v-if="manualOut.error && manualOut.error !== 'empty'" id="reason-outside" class="reason" :data-outside-error="manualOut.error">
+                {{ t(`remote.s4_manual_e_${manualOut.error}`) }}
+              </p>
+              <HoldReveal v-if="manualOut.host" data-manual-value :value="manualOut.host" :label="t('remote.s4_value_label')" :format="forMoonlight" copy />
+              <p v-if="manualOut.value && manualOut.portReplaced" class="muted" data-port-replaced>
+                {{ t('remote.s4_manual_port_replaced', { port: base }) }}
+              </p>
+              <p class="muted" data-not-saved>{{ t('remote.s4_manual_not_saved') }}</p>
+            </div>
+            <p v-if="base !== DEFAULT_PORT" class="muted" data-port-suffix>{{ t('remote.port_suffix_note', { port: base }) }}</p>
+            <p class="muted" data-wan-changes>{{ t('remote.s4_wan_changes') }}</p>
+            <p class="muted" data-ddns>{{ t('remote.s4_ddns') }}</p>
+          </template>
+          <p class="muted">{{ t('remote.share_warning') }}</p>
+        </li>
+        <li data-s4="pin">
+          <strong>{{ t('remote.s4_pin_title') }}</strong>
+          <p>
+            {{ t('remote.s4_pin') }}
+            <RouterLink to="/devices/pair" data-pin-link>{{ t('pair.title') }}</RouterLink>
+          </p>
+        </li>
+        <li data-s4="pairing">
+          <strong>{{ t('remote.s4_pairing_title') }}</strong>
+          <p class="muted">{{ t('remote.s4_pairing') }}</p>
+          <p data-pairing>{{ t('remote.now_value', { value: pairingOn ? t('remote.v_enabled') : t('remote.v_disabled') }) }}</p>
+          <p v-if="changes.some((c) => c.key === 'enable_pairing')" class="muted">
+            {{ t('remote.before_value', { value: valueText('enable_pairing', changes.find((c) => c.key === 'enable_pairing')!.before) }) }}
+          </p>
+          <div class="row">
+            <button
+              v-if="pairingOn"
+              class="button button--ghost"
+              type="button"
+              :disabled="!!busy || !host.online"
+              data-action="pairing-off"
+              @click="change('enable_pairing', 'disabled')"
+            >
+              {{ t('remote.pairing_off') }}
+            </button>
+            <button
+              v-else
+              class="button button--ghost"
+              type="button"
+              :disabled="!!busy || !host.online"
+              data-action="pairing-on"
+              @click="change('enable_pairing', 'enabled')"
+            >
+              {{ t('remote.pairing_on') }}
+            </button>
+          </div>
+        </li>
+        <li data-s4="result">
+          <strong>{{ t('remote.s4_q') }}</strong>
+          <div class="row">
+            <button class="button button--primary" type="button" data-result="ok" :aria-pressed="progress.result === 'ok'" @click="setResult('ok')">
+              {{ t('remote.s4_ok') }}
+            </button>
+            <button class="button button--ghost" type="button" data-result="fail" :aria-pressed="progress.result === 'fail'" @click="setResult('fail')">
+              {{ t('remote.s4_fail') }}
+            </button>
+          </div>
+          <p v-if="progress.result === 'ok'" class="banner banner--ok" data-result-ok>{{ t('remote.s4_ok_text') }}</p>
+          <template v-if="progress.result === 'fail'">
+            <h3 class="card__title">{{ t('remote.s4_fail_title') }}</h3>
+            <ul class="list list--warn" data-causes>
+              <li>{{ t('remote.f_cgnat') }}</li>
+              <li>{{ t('remote.f_double') }}</li>
+              <li>{{ t('remote.f_relay') }}</li>
+              <li>{{ t('remote.f_firewall') }}</li>
+              <li>{{ t('remote.f_isp') }}</li>
+              <li>{{ t('remote.f_port', { port: base }) }}</li>
+              <li data-cause-moonlight>{{ t('remote.f_moonlight') }}</li>
+            </ul>
+          </template>
+        </li>
+      </ol>
       <div class="row">
-        <button class="button button--primary" type="button" data-result="ok" :aria-pressed="result === 'ok'" @click="result = 'ok'">
-          {{ t('remote.s4_ok') }}
+        <button class="button button--ghost" type="button" @click="go(via === 'tailscale' ? '3a' : via === 'upnp' ? '3c' : via === 'forward' ? '3b' : '2')">
+          {{ t('remote.back') }}
         </button>
-        <button class="button button--ghost" type="button" data-result="fail" :aria-pressed="result === 'fail'" @click="result = 'fail'">
-          {{ t('remote.s4_fail') }}
-        </button>
-      </div>
-      <p v-if="result === 'ok'" class="banner banner--ok" data-result-ok>{{ t('remote.s4_ok_text') }}</p>
-      <template v-if="result === 'fail'">
-        <h3 class="card__title">{{ t('remote.s4_fail_title') }}</h3>
-        <ul class="list list--warn" data-causes>
-          <li>{{ t('remote.f_cgnat') }}</li>
-          <li>{{ t('remote.f_double') }}</li>
-          <li>{{ t('remote.f_relay') }}</li>
-          <li>{{ t('remote.f_firewall') }}</li>
-          <li>{{ t('remote.f_isp') }}</li>
-          <li>{{ t('remote.f_port', { port: base }) }}</li>
-          <li data-cause-moonlight>{{ t('remote.f_moonlight') }}</li>
-        </ul>
-      </template>
-      <template v-if="EXTERNAL_CHECK_URL">
-        <h3 class="card__title">{{ t('remote.s4_check_title') }}</h3>
-        <p class="muted">{{ t('remote.s4_check_consent') }}</p>
-        <a :href="EXTERNAL_CHECK_URL" target="_blank" rel="noopener noreferrer" data-external-check>{{ t('remote.s4_check_link') }}</a>
-      </template>
-      <div class="row">
-        <button class="button button--ghost" type="button" @click="go('2')">{{ t('remote.back') }}</button>
-        <button class="button button--primary" type="button" @click="go('5')">{{ t('remote.next') }}</button>
+        <button class="button button--primary" type="button" data-next-5 @click="go('5')">{{ t('remote.next_5') }}</button>
       </div>
     </section>
 
-    <!-- 5 undo -->
+    <!-- 5 finish (H031 F4) -->
     <section v-if="step === '5'" class="card" data-remote-step="5">
       <h2 class="card__title">{{ t('remote.s5_title') }}</h2>
-      <p class="muted">{{ t('remote.s5_lead') }}</p>
-      <p v-if="!changes.length" class="muted" data-changes-none>{{ t('remote.s5_none') }}</p>
-      <div v-else class="table-wrap">
-        <table class="table" data-changes>
-          <thead>
-            <tr>
-              <th scope="col">{{ t('remote.th_key') }}</th>
-              <th scope="col">{{ t('remote.th_before') }}</th>
-              <th scope="col">{{ t('remote.th_after') }}</th>
-              <th scope="col"><span class="sr-only">{{ t('remote.revert') }}</span></th>
-            </tr>
-          </thead>
+      <p class="banner banner--ok" data-done><strong>{{ t('remote.s5_done') }}</strong> {{ t('remote.s5_done_lead') }}</p>
+      <div class="table-wrap">
+        <table class="table remote__summary" data-summary>
           <tbody>
-            <tr v-for="c in changes" :key="c.key" :data-change="c.key">
-              <td>{{ t(`remote.k_${c.key}`) }}</td>
-              <td>{{ valueText(c.key, c.before) }}</td>
-              <td>{{ valueText(c.key, raw(c.key)) }}</td>
+            <tr v-for="row in summary" :key="row.id" :data-summary-row="row.id">
+              <th scope="row">{{ t(`remote.sum_${row.id}`) }}</th>
               <td>
-                <button
-                  class="button button--ghost"
-                  type="button"
-                  :disabled="!!busy || !host.online || !!revertReason(c)"
-                  :aria-disabled="!!revertReason(c)"
-                  :aria-describedby="revertReason(c) ? `reason-revert-${c.key}` : undefined"
-                  :data-revert="c.key"
-                  @click="change(c.key, c.before, true)"
-                >
-                  {{ t('remote.revert') }}
-                </button>
-                <ReasonText :id="`reason-revert-${c.key}`" :reason="revertReason(c)" />
+                {{ t(row.text, row.params ?? {}) }}
+                <p v-if="row.advice" class="muted" data-pairing-advice>
+                  {{ t(row.advice) }}
+                  <button class="button button--link" type="button" data-go-4 @click="go('4')">{{ t('remote.s4_pairing_title') }}</button>
+                </p>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p class="muted" data-wan-enc>{{ t('remote.s5_wan_enc', { value: wanEnc }) }}</p>
       <div v-if="movedTo" class="banner banner--ok" data-moved>
         <p>
           {{ t('remote.new_link') }}:
           <a :href="movedTo.url" data-new-link>https://{{ MASK }}:{{ movedTo.port }}/arbs/remote</a>
         </p>
       </div>
+      <details v-if="changes.length" class="details" data-advanced-revert :open="prevPortLink">
+        <summary>{{ t('remote.s5_advanced') }}</summary>
+        <p class="muted">{{ t('remote.s5_lead') }}</p>
+        <div class="table-wrap">
+          <table class="table" data-changes>
+            <thead>
+              <tr>
+                <th scope="col">{{ t('remote.th_key') }}</th>
+                <th scope="col">{{ t('remote.th_before') }}</th>
+                <th scope="col">{{ t('remote.th_after') }}</th>
+                <th scope="col"><span class="sr-only">{{ t('remote.revert') }}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="c in changes" :key="c.key" :data-change="c.key">
+                <td>{{ t(`remote.k_${c.key}`) }}</td>
+                <td>{{ valueText(c.key, c.before) }}</td>
+                <td>{{ valueText(c.key, raw(c.key)) }}</td>
+                <td>
+                  <button
+                    class="button button--ghost"
+                    type="button"
+                    :disabled="!!busy || !host.online || !!revertReason(c)"
+                    :aria-disabled="!!revertReason(c)"
+                    :aria-describedby="revertReason(c) ? `reason-revert-${c.key}` : undefined"
+                    :data-revert="c.key"
+                    @click="change(c.key, c.before, true)"
+                  >
+                    {{ t('remote.revert') }}
+                  </button>
+                  <ReasonText :id="`reason-revert-${c.key}`" :reason="revertReason(c)" />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
       <div class="row">
         <button class="button button--ghost" type="button" @click="go('4')">{{ t('remote.back') }}</button>
       </div>

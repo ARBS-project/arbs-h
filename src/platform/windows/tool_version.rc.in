@@ -2,12 +2,15 @@
  * @file src/platform/windows/tool_version.rc.in
  * @brief Windows VERSIONINFO template for helper/tool executables.
  *
- * This intentionally does not include an ICON resource.  Helper binaries should
- * keep their previous icon behavior while still carrying fixed FILEVERSION
- * metadata so MSI can make deterministic file replacement decisions.
+ * Helper binaries carry fixed FILEVERSION metadata so MSI can make deterministic
+ * file replacement decisions.
+ * ARBS-H 0.3.1 (H031, P-5): they also carry the ARBS icon (upstream had no ICON
+ * resource here on purpose; ARBS-H shows its own icon for every bundled tool).
  */
 #include "winver.h"
 #include "windows_versioninfo_generated.h"
+
+1 ICON "@ARBS_TOOL_ICON@"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION     RC_VERSION_MAJOR,RC_VERSION_MINOR,RC_VERSION_BUILD,RC_VERSION_REVISION

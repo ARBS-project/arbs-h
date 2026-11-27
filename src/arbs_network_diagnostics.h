@@ -6,7 +6,9 @@
  * The handler in confighttp.cpp signs in first (authenticate), never calls print_req and never logs
  * this body; it sends it with Cache-Control: no-store. This builder is pure: it does not log, keep or
  * send anything. Interface addresses are included for the screen (shown hidden by default, D5); the
- * UPnP WAN address is never included (kind only), adapter names are never included.
+ * diagnostics body never includes the UPnP WAN address (kind only), adapter names are never included.
+ * 0.3.1 (H031): GET /api/network/router-wan returns the router's outside address only on request and only
+ * when it is public (router_wan_json below), same sign-in / no print_req / no log / no-store rules.
  */
 #pragma once
 
@@ -94,6 +96,24 @@ namespace arbs::netdiag {
       {"upnp_with_wan_origin", in.upnp_enabled && in.origin_wan},
       {"origin_wan", in.origin_wan},
     };
+    return out;
+  }
+
+  /**
+   * 0.3.1 (H031 F3): body of GET /api/network/router-wan. `address` is present only for a public address
+   * (router_wan_from_text never keeps a private / 100.64 value). Pure: no log, no storage.
+   */
+  inline nlohmann::json router_wan_json(const netpolicy::router_wan_t &wan) {
+    nlohmann::json out;
+    out["status"] = true;
+    nlohmann::json body = {
+      {"state", std::string(netpolicy::to_string(wan.state))},
+      {"kind", std::string(netpolicy::to_string(wan.state == netpolicy::router_wan_e::ok ? wan.kind : netpolicy::wan_kind_e::unknown))},
+    };
+    if (wan.state == netpolicy::router_wan_e::ok && wan.kind == netpolicy::wan_kind_e::public_ && !wan.address.empty()) {
+      body["address"] = wan.address;
+    }
+    out["router_wan"] = body;
     return out;
   }
 

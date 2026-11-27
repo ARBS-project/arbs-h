@@ -79,4 +79,13 @@ namespace upnp {
    * @details Kinds and counts only: no address is kept. igd = not_run until the UPnP thread has run once.
    */
   [[nodiscard]] arbs::netpolicy::upnp_status_t last_status();
+
+  /**
+   * @brief ARBS-H 0.3.1 (H031 F3): ask the router on the LAN for its outside address, read only.
+   * @details SSDP discovery, then only devices whose description / control URL host is a LAN address, then
+   * GetExternalIPAddress. No port mapping, no pinhole, nothing deleted; works whether the `upnp` setting is on or
+   * off; writes no log; does not throw. The address is returned only when it is public (router_wan_from_text).
+   * One request at a time: a second caller gets `busy`. Takes up to a few seconds (use a blocking route).
+   */
+  [[nodiscard]] arbs::netpolicy::router_wan_t read_external_address() noexcept;
 }  // namespace upnp

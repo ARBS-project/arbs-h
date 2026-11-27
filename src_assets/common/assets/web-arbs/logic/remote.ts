@@ -444,3 +444,163 @@ export function parseStep(value: unknown): Step {
   const text = Array.isArray(value) ? value[0] : value;
   return (STEPS as readonly unknown[]).includes(text) ? (text as Step) : '0';
 }
+
+// ---------------------------------------------------------------------------------------------
+// 0.3.1 (H031 F3): the router's outside (WAN) address and the value to put into Moonlight
+// ---------------------------------------------------------------------------------------------
+/** GET /api/network/router-wan: the server asks the router (same LAN, UPnP read only, no mapping) once per request. */
+export type RouterWanState = 'ok' | 'no_router' | 'no_answer' | 'busy' | 'error';
+
+export interface RouterWan {
+  state: RouterWanState;
+  kind: WanKind;
+  /** Only for a public address (P-10: a private / 100.64 value is never kept or shown). */
+  address: HiddenText | null;
+}
+
+function publicV4(text: string): boolean {
+  const a = v4(text);
+  if (!a) return false;
+  return hostKind(text) === 'public' && a[0] !== 0 && a[0] < 224;
+}
+
+/** Server reply -> model. Anything unreadable (older server, error) = 'error' so the page offers typing it in. */
+export function readRouterWan(raw: unknown): RouterWan {
+  const r = (raw && typeof raw === 'object' ? (raw as Record<string, any>).router_wan : null) as Record<string, unknown> | null;
+  if (!r || typeof r !== 'object') return { state: 'error', kind: 'unknown', address: null };
+  const state = pick<RouterWanState>(r.state, ['ok', 'no_router', 'no_answer', 'busy'], 'error');
+  const kind = state === 'ok' ? pick(r.kind, WAN, 'unknown') : 'unknown';
+  const text = typeof r.address === 'string' ? r.address.trim() : '';
+  const address = kind === 'public' && publicV4(text) ? hideText(text) : null;
+  return { state, kind: kind === 'public' && !address ? 'unknown' : kind, address };
+}
+
+export type OutsideError = 'empty' | 'format' | 'private';
+
+export interface OutsideValue {
+  /** Text for Moonlight "호스트 추가": address (default port) or address:port, [v6]:port, name:port. */
+  value: HiddenText | null;
+  /** The address / name part only (shown as "●●●" + ":port" like the other rows, then moonlightAddress). */
+  host: HiddenText | null;
+  error: OutsideError | null;
+  /** The typed text had another :port; this PC's port was used instead. */
+  portReplaced: boolean;
+}
+
+const NAME = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/**
+ * "직접 넣기": what the user typed (the router's WAN address, or a DDNS name) -> the value to put into Moonlight.
+ * Spaces, http(s)://, a path and a trailing "/" are dropped; a typed :port is replaced by this PC's port. Private,
+ * 100.64, loopback and 0.x addresses are refused (they do not work from outside). Nothing is stored: screen memory only.
+ */
+export function outsideValue(text: string, base: number): OutsideValue {
+  let t = String(text ?? '').trim().toLowerCase();
+  t = t.replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/[/?#].*$/, '');
+  if (!t) return { value: null, host: null, error: 'empty', portReplaced: false };
+  let host = t;
+  let typedPort: string | null = null;
+  const bracket = /^\[([0-9a-f:.]+)\](?::(\d{1,5}))?$/.exec(t);
+  if (bracket) {
+    host = bracket[1]!;
+    typedPort = bracket[2] ?? null;
+  } else if ((t.match(/:/g) ?? []).length === 1) {
+    const [h, p] = t.split(':');
+    if (!/^\d{1,5}$/.test(p!)) return { value: null, host: null, error: 'format', portReplaced: false };
+    host = h!;
+    typedPort = p!;
+  }
+  if (!host) return { value: null, host: null, error: 'format', portReplaced: false };
+  const portReplaced = typedPort !== null && Number(typedPort) !== base;
+  const done = (h: string): OutsideValue => ({ value: hideText(moonlightAddress(h, base)), host: hideText(h), error: null, portReplaced });
+  if (v4(host)) return publicV4(host) ? done(host) : { value: null, host: null, error: 'private', portReplaced: false };
+  if (/^[\d.]+$/.test(host)) return { value: null, host: null, error: 'format', portReplaced: false };
+  if (host.includes(':')) {
+    if (!/^[0-9a-f:.]+$/.test(host)) return { value: null, host: null, error: 'format', portReplaced: false };
+    // Global unicast 2000::/3 only; ::1, fe80::, fc00::/7 and the like do not work from outside.
+    return /^[23][0-9a-f]{0,3}:/.test(host) ? done(host) : { value: null, host: null, error: 'private', portReplaced: false };
+  }
+  if (NAME.test(host) && !host.endsWith('.local') && !host.endsWith('.localhost')) return done(host);
+  return { value: null, host: null, error: 'format', portReplaced: false };
+}
+
+// ---------------------------------------------------------------------------------------------
+// 0.3.1 (H031 F2/F4): chosen method and result (not addresses) for the "마무리" summary
+// ---------------------------------------------------------------------------------------------
+export type Via = 'tailscale' | 'forward' | 'upnp' | 'none';
+export const VIAS: readonly Via[] = ['tailscale', 'forward', 'upnp', 'none'];
+export const PROGRESS_KEY = 'arbs.remote.progress';
+
+export function parseVia(value: unknown): Via | null {
+  const text = Array.isArray(value) ? value[0] : value;
+  return typeof text === 'string' && (VIAS as readonly string[]).includes(text) ? (text as Via) : null;
+}
+
+export interface Progress {
+  via: Via;
+  result: '' | 'ok' | 'fail';
+}
+
+export function readProgress(text: string | null): Progress {
+  try {
+    const p = JSON.parse(text ?? '{}') as Record<string, unknown>;
+    const result = p && (p.result === 'ok' || p.result === 'fail') ? p.result : '';
+    return { via: parseVia(p?.via) ?? 'none', result };
+  } catch {
+    return { via: 'none', result: '' };
+  }
+}
+
+export interface SummaryRow {
+  id: 'method' | 'rules' | 'result' | 'pairing';
+  /** i18n key under remote. */
+  text: string;
+  params?: Record<string, string | number>;
+  /** pairing still on: suggest turning it off on step 4. */
+  advice?: string;
+}
+
+/** "끝났어요" rows: method, router rules (port forwarding / UPnP only), outside result, new pairing. */
+export function finishSummary(progress: Progress, base: number, pairingOn: boolean): SummaryRow[] {
+  const rows: SummaryRow[] = [{ id: 'method', text: `remote.sum_via_${progress.via}` }];
+  if (progress.via === 'forward') {
+    const p = streamPorts(base);
+    rows.push({
+      id: 'rules',
+      text: 'remote.sum_rules_forward',
+      params: { tcp: p.tcp.map((e) => e.port).join(', '), udp: p.udp.map((e) => e.port).join(', ') },
+    });
+  } else if (progress.via === 'upnp') {
+    rows.push({ id: 'rules', text: 'remote.sum_rules_upnp' });
+  }
+  rows.push({ id: 'result', text: `remote.sum_result_${progress.result || 'none'}` });
+  rows.push(
+    pairingOn
+      ? { id: 'pairing', text: 'remote.sum_pairing_on', advice: 'remote.sum_pairing_advice' }
+      : { id: 'pairing', text: 'remote.sum_pairing_off' },
+  );
+  return rows;
+}
+
+/**
+ * Plain-language value of a wizard setting for the screen (never the raw config word): an i18n key under remote,
+ * or the port number as is. '' = no line = server default.
+ */
+export function easyValue(key: WizardKey, value: string): { text: string } | { raw: string } {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (v === '') return { text: 'remote.v_none' };
+  switch (key) {
+    case 'port':
+      return { raw: String(value).trim() };
+    case 'upnp':
+    case 'enable_pairing':
+      return { text: serverBool(v, false) ? 'remote.v_enabled' : 'remote.v_disabled' };
+    case 'lan_encryption_mode':
+      return { text: v === '0' ? 'remote.v_disabled' : 'remote.v_enabled' };
+    case 'wan_encryption_mode':
+      return { text: v === '0' ? 'remote.v_wan_off' : v === '2' ? 'remote.v_wan_always' : 'remote.v_wan_auto' };
+    case 'origin_web_ui_allowed':
+      return { text: v === 'pc' ? 'remote.v_origin_pc' : v === 'wan' ? 'remote.v_origin_wan' : 'remote.v_origin_lan' };
+  }
+  return { raw: value };
+}

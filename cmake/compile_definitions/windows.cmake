@@ -68,9 +68,9 @@ set(SUNSHINE_WINDOWS_VDISPLAY_SOURCES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_display_sunshine.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_display_sudovda.cpp")
 
-# apollo icon
+# ARBS-H 0.3.1 (H031): ARBS icon (source: arbs repository branding/; the old apollo.ico stays in the tree)
 if(NOT DEFINED PROJECT_ICON_PATH)
-    set(PROJECT_ICON_PATH "${CMAKE_SOURCE_DIR}/apollo.ico")
+    set(PROJECT_ICON_PATH "${CMAKE_SOURCE_DIR}/branding/arbs.ico")
 endif()
 
 list(APPEND SUNSHINE_DEFINITIONS PROJECT_APP_USER_MODEL_ID="${WINDOWS_APP_USER_MODEL_ID}")
@@ -134,6 +134,8 @@ function(sunshine_add_windows_versioninfo target_name)
         set(_versioninfo_original_filename "${target_name}.exe")
         # D-CI-8 (ARBS-H UI1b): every bundled tool reports the product as ARBS-H.
         set(_versioninfo_product_name "${PROJECT_NAME}")
+        # ARBS-H 0.3.1 (H031, P-5): bundled tools carry the ARBS icon too.
+        set(ARBS_TOOL_ICON "${PROJECT_ICON_PATH}")
         configure_file(
             "${CMAKE_SOURCE_DIR}/src/platform/windows/tool_version.rc.in"
             "${_rc_file}"

@@ -17,9 +17,10 @@
 #ifndef SrcRoot
   #define SrcRoot "..\..\.."
 #endif
-; Icon slot (R1a decision 3): apollo.ico for 0.1.0; pass /DAppIcon=<path to ARBS-H logo .ico> when a logo exists.
+; Icon slot (R1a decision 3): apollo.ico up to 0.3.0; 0.3.1 (H031): the ARBS icon (branding\arbs.ico, made from the
+; arbs repository branding/; apollo.ico stays in the tree). /DAppIcon=<path> still overrides it.
 #ifndef AppIcon
-  #define AppIcon SrcRoot + "\apollo.ico"
+  #define AppIcon SrcRoot + "\branding\arbs.ico"
 #endif
 ; Installer identity. NEVER change it (upgrades find the installed copy by it) and never reuse Vibepollo's
 ; MSI UpgradeCode {E3FA501A-85F8-4187-85A7-D6E6BDC7EDA1}.
@@ -88,9 +89,10 @@ Source: "arbs-h-rollback.cmd"; DestDir: "{commonappdata}\ARBS-H\rollback"; Flags
 
 [Icons]
 Name: "{group}\ARBS-H 웹 UI 열기"; Filename: "{app}\sunshine.exe"; Parameters: "--shortcut"; WorkingDir: "{app}"
-Name: "{group}\ARBS-H 되돌리기 (Vibepollo 서비스 원래대로)"; Filename: "{app}\tools\arbs-h\arbs-h-rollback.cmd"; WorkingDir: "{app}\tools\arbs-h"
-Name: "{group}\ARBS-H 로그 모으기"; Filename: "{app}\tools\arbs-h\arbs-h-collect-logs.cmd"; WorkingDir: "{app}\tools\arbs-h"
-Name: "{group}\ARBS-H 상태 기록 (읽기만)"; Filename: "{app}\tools\arbs-h\arbs-h-snapshot.cmd"; WorkingDir: "{app}\tools\arbs-h"
+; 0.3.1 (H031, P-6): the .cmd shortcuts show the ARBS icon from sunshine.exe instead of the cmd icon.
+Name: "{group}\ARBS-H 되돌리기 (Vibepollo 서비스 원래대로)"; Filename: "{app}\tools\arbs-h\arbs-h-rollback.cmd"; WorkingDir: "{app}\tools\arbs-h"; IconFilename: "{app}\sunshine.exe"
+Name: "{group}\ARBS-H 로그 모으기"; Filename: "{app}\tools\arbs-h\arbs-h-collect-logs.cmd"; WorkingDir: "{app}\tools\arbs-h"; IconFilename: "{app}\sunshine.exe"
+Name: "{group}\ARBS-H 상태 기록 (읽기만)"; Filename: "{app}\tools\arbs-h\arbs-h-snapshot.cmd"; WorkingDir: "{app}\tools\arbs-h"; IconFilename: "{app}\sunshine.exe"
 Name: "{group}\ARBS-H 제거"; Filename: "{uninstallexe}"
 
 [UninstallDelete]

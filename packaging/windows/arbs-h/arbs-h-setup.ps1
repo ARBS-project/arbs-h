@@ -23,7 +23,7 @@ param(
   [string]$AppDir = (Join-Path $env:ProgramFiles 'ARBS-H'),
   [string]$DataRoot = (Join-Path $env:ProgramData 'ARBS-H'),
   [string]$VibepolloConfig = '',
-  [string]$Version = '0.3.0',
+  [string]$Version = '0.3.1',
   # H013 O4: ARBS-H service start type and state seen by the first prepare (auto|delayed-auto|demand|disabled|none and
   # an sc.exe state). Plain strings on purpose: an unexpected value must not stop post-install at parameter binding.
   [string]$PrevStart = '',

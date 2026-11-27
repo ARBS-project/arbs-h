@@ -4,6 +4,8 @@
 // H021: sidebar headings, gamepad list / hidden value / trigger states, default apps, statistics.
 // H022: orange group titles (wide page + narrow drawer), history days default 30.
 // NET2 (0.3.0): remote access wizard (all steps light/dark, 390 px), hiding, blocks, port change, drawer + save bar.
+// H031 (0.3.1): hold-to-show with a real mouse / touch / keyboard, 3b router only, 4 outside value (router answer or
+// typed, documentation address 203.0.113.7 only), 5 finish summary, no setting key names, ARBS icon on the web screens.
 // Usage: node scripts/screens.mjs --base http://127.0.0.1:5180 --out <dir>
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -33,6 +35,16 @@ function check(name, pass, detail = '') {
 }
 
 const releases = [
+  {
+    tag_name: 'v0.3.1',
+    name: 'ARBS-H 0.3.1',
+    draft: false,
+    prerelease: false,
+    html_url: 'https://github.com/arbs-project/arbs-h/releases/tag/v0.3.1',
+    body: 'mock',
+    published_at: '2026-11-29T00:00:00Z',
+    assets: [{ name: 'arbs-h-0.3.1-setup.exe', state: 'uploaded', size: 1000 }],
+  },
   {
     tag_name: 'v0.3.0',
     name: 'ARBS-H 0.3.0',
@@ -439,6 +451,7 @@ try {
     await page.goto(`${base}/arbs/remote?step=${s}${query}`);
     await page.waitForSelector(`[data-remote-step="${s}"]`, { timeout: 15000 });
     await page.waitForTimeout(250);
+    if (s === '5') await page.$eval('[data-advanced-revert]', (d) => (d.open = true)).catch(() => undefined);
   }
   async function addressesMasked(page) {
     const texts = await page.$$eval('[data-address]', (els) => els.map((e) => e.textContent.trim()));
@@ -520,14 +533,16 @@ try {
     await step(page, '3a');
     check('NET2 3a port 45989: hidden address + :45989', (await page.textContent('[data-tailnet] [data-address]')).trim() === `${MASK}:45989`);
     check('NET2 3a port 45989: ":port" note shown', await page.isVisible('[data-port-suffix]'));
-    await page.dispatchEvent('[data-tailnet] [data-reveal]', 'pointerdown');
-    await page.waitForTimeout(100);
+    const rv = await page.locator('[data-tailnet] [data-reveal]').boundingBox();
+    await page.mouse.move(rv.x + 6, rv.y + rv.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(150);
     const shownText = (await page.textContent('[data-tailnet] [data-address]')).trim();
     check('NET2 3a reveal while pressed shows the example form 100.x.y.z:45989', shownText === '100.x.y.z:45989', shownText);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: join(out, 'NET2-step3a-reveal-example-light.png'), fullPage: true });
     results.shots.push({ name: 'NET2-step3a-reveal-example-light', path: '/arbs/remote?step=3a', file: 'NET2-step3a-reveal-example-light.png' });
-    await page.dispatchEvent('[data-tailnet] [data-reveal]', 'pointerup');
+    await page.mouse.up();
     await page.waitForTimeout(100);
     check('NET2 3a released: hidden again', (await page.textContent('[data-tailnet] [data-address]')).trim() === `${MASK}:45989`);
     try {
@@ -549,9 +564,11 @@ try {
     check('NET2 3b table = TCP 47984 47989 48010 + UDP 47998 47999 48000 (no 47990)', JSON.stringify(rows) === JSON.stringify(['tcp-47984', 'tcp-47989', 'tcp-48010', 'udp-47998', 'udp-47999', 'udp-48000']), JSON.stringify(rows));
     check('NET2 3b local address hidden', (await page.textContent('[data-local] [data-address]')).trim() === MASK);
     check('NET2 3b official router guides only (ASUS, TP-Link), STACKON hidden while empty', JSON.stringify(await page.$$eval('[data-guide]', (as) => as.map((a) => a.dataset.guide))) === '["asus","tplink"]');
+    check('H031 3b has no new pairing switch (moved to step 4)', !(await page.isVisible('[data-action="pairing-off"]')));
+    await step(page, '4');
     await page.click('[data-action="pairing-off"]');
     await page.waitForSelector('[data-action="pairing-on"]');
-    check('NET2 3b new pairing off PATCH + undo button', JSON.stringify((await last()).lastPatch) === JSON.stringify({ enable_pairing: 'disabled' }));
+    check('H031 4 new pairing off PATCH + turn-on button', JSON.stringify((await last()).lastPatch) === JSON.stringify({ enable_pairing: 'disabled' }));
 
     await mock({ reset: true, config: { origin_web_ui_allowed: 'wan' } });
     await step(page, '1');
@@ -631,7 +648,7 @@ try {
     await page.waitForTimeout(400);
     check('NET2 step 5 "이전 값으로" PATCH port="" (no line again)', JSON.stringify((await last()).lastPatch) === JSON.stringify({ port: '' }));
     check('NET2 step 5 port row gone after the undo (other changes stay)', !(await page.isVisible('[data-change="port"]')) && (await page.isVisible('[data-change="enable_pairing"]')));
-    check('NET2 step 5 shows wan_encryption_mode 1 (D8, not changed)', (await page.textContent('[data-wan-enc]')).includes('1'));
+    check('H031 step 5 has no internet encryption line (D8 value not shown or changed)', !(await page.isVisible('[data-wan-enc]')));
     const keys = [...new Set(((await last()).patches ?? []).flatMap((p) => Object.keys(p)))];
     check('NET2 all wizard PATCHes use the 6 allowed keys only', keys.every((k) => WIZARD_KEYS.includes(k)), JSON.stringify(keys));
     await ctx.close();
@@ -652,6 +669,376 @@ try {
     check('NET2 never-open box follows the port (TCP 45990)', (await page2.textContent('[data-never="web_ui"]')).includes('TCP 45990'));
     await ctx2.close();
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // H031 (0.3.1). Addresses: hidden (●●●) or the documentation example 203.0.113.7 / format examples (100.x.y.z,
+  // 192.168.x.y) from the mock. Every "보기" is pressed with the real mouse / touch / keyboard (no synthetic events).
+  // ---------------------------------------------------------------------------------------------
+  results.h031 = { requests: [], shots: [] };
+  const DOC = '203.0.113.7';
+  async function h031Shot(page, name, viewportToo = true) {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: join(out, `${name}.png`), fullPage: true });
+    results.shots.push({ name, path: new URL(page.url()).pathname + new URL(page.url()).search, file: `${name}.png` });
+    if (viewportToo) {
+      await page.screenshot({ path: join(out, `${name}-viewport.png`), fullPage: false });
+      results.shots.push({ name: `${name}-viewport`, path: new URL(page.url()).pathname, file: `${name}-viewport.png` });
+    }
+  }
+  /** Real mouse press on a "보기": returns the shown text after 150 ms, after an 80 px drag, after letting go. */
+  async function mouseHold(page, row, where = 'left') {
+    const btn = page.locator(`${row} [data-reveal]`).first();
+    await btn.scrollIntoViewIfNeeded();
+    const box = await btn.boundingBox();
+    const x = where === 'left' ? box.x + 5 : box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.waitForTimeout(150);
+    const during = (await page.textContent(`${row} [data-address]`)).trim();
+    const moved = await btn.boundingBox();
+    await page.mouse.move(x + 80, y + 30, { steps: 4 });
+    await page.waitForTimeout(100);
+    const dragged = (await page.textContent(`${row} [data-address]`)).trim();
+    return {
+      during,
+      dragged,
+      sameSpot: Math.round(moved.x) === Math.round(box.x) && Math.round(moved.y) === Math.round(box.y),
+      release: async () => {
+        await page.mouse.up();
+        await page.waitForTimeout(120);
+        return (await page.textContent(`${row} [data-address]`)).trim();
+      },
+    };
+  }
+  function trackRequests(ctx) {
+    ctx.on('request', (r) => {
+      const u = new URL(r.url());
+      if (u.hostname !== '127.0.0.1') results.h031.requests.push(u.hostname);
+    });
+  }
+  const visibleTextHasKeys = (page) =>
+    page.evaluate(() => {
+      const text = document.querySelector('[data-page="remote"]').innerText;
+      return (text.match(/[a-z0-9]+_[a-z0-9_]+|origin_web_ui_allowed|encryption_mode|enable_pairing|\((lan|wan|pc)\)/g) ?? []).filter((m) => !/^\d/.test(m));
+    });
+
+  // H031 wide pages light / dark (+ viewport-size captures): 3b, 4 (router answered), 5 finish.
+  for (const theme of ['light', 'dark']) {
+    await mock({ reset: true, config: { port: '45989' } });
+    const ctx = await context(browser, theme);
+    trackRequests(ctx);
+    const page = await ctx.newPage();
+    await page.evaluate(() => sessionStorage.clear()).catch(() => undefined);
+    await step(page, '3b', '&via=forward');
+    check(`H031 ${theme} 3b: router-only lead line`, await page.isVisible('[data-3b-lead]'));
+    check(`H031 ${theme} 3b: no outside value / PIN / new pairing on this step`, !(await page.isVisible('[data-outside-value]')) && !(await page.isVisible('[data-action="pairing-off"]')) && !(await page.isVisible('[data-pin-link]')));
+    check(`H031 ${theme} 3b: makers' guides under item 3 (two routers)`, (await page.$$('[data-3b-double] [data-guide]')).length === 2);
+    await h031Shot(page, `H031-step3b-${theme}`);
+    await page.click('[data-next-4]');
+    await page.waitForSelector('[data-remote-step="4"]');
+    await page.waitForSelector('[data-wan-state="ok"]');
+    check(`H031 ${theme} 4: router answer shown hidden (address and value)`, (await page.textContent('[data-wan-address] [data-address]')).trim() === MASK && (await page.textContent('[data-outside-value] [data-address]')).trim() === `${MASK}:45989`);
+    check(`H031 ${theme} 4: order = network, value, PIN, new pairing, result`, await page.evaluate(() => [...document.querySelectorAll('[data-s4]')].map((e) => e.dataset.s4).join(',') === 'network,value,pin,pairing,result'));
+    check(`H031 ${theme} 4: "주소가 바뀌면" and DDNS lines`, (await page.isVisible('[data-wan-changes]')) && (await page.isVisible('[data-ddns]')));
+    await h031Shot(page, `H031-step4-forward-${theme}`);
+    await page.click('[data-action="pairing-off"]');
+    await page.waitForSelector('[data-action="pairing-on"]');
+    await page.click('[data-result="ok"]');
+    await page.click('[data-next-5]');
+    await page.waitForSelector('[data-remote-step="5"]');
+    const rows = await page.$$eval('[data-summary-row]', (trs) => trs.map((tr) => [tr.dataset.summaryRow, tr.querySelector('td').innerText.trim()]));
+    check(`H031 ${theme} 5: summary = 포트 포워딩 / 6 rules / 됐어요 / 꺼짐`, JSON.stringify(rows) === JSON.stringify([['method', '포트 포워딩'], ['rules', '6개(TCP 45984, 45989, 46010 · UDP 45998, 45999, 46000)'], ['result', '됐어요'], ['pairing', '꺼짐(권장)']]), JSON.stringify(rows));
+    check(`H031 ${theme} 5: advanced undo present and closed`, (await page.$eval('[data-advanced-revert]', (d) => !d.open)) && !(await page.isVisible('[data-changes]')));
+    await h031Shot(page, `H031-step5-finish-${theme}`);
+    await page.$eval('[data-advanced-revert]', (d) => (d.open = true));
+    check(`H031 ${theme} 5: plain words in the change table`, (await page.textContent('[data-change="enable_pairing"]')).includes('꺼짐') && !(await page.textContent('[data-changes]')).match(/disabled|enabled/));
+    if (theme === 'light') await h031Shot(page, 'H031-step5-finish-advanced-open-light', false);
+    for (const st of ['0', '1', '2', '3a', '3b', '3c', '3d', '4', '5']) {
+      await step(page, st);
+      const keys = await visibleTextHasKeys(page);
+      check(`H031 ${theme} step ${st}: no setting key name on screen`, keys.length === 0, JSON.stringify(keys));
+      check(`H031 ${theme} step ${st}: addresses hidden`, await addressesMasked(page));
+    }
+    await ctx.close();
+  }
+
+  // H031 narrow (390 px) light / dark: 3b, 4 (typed value), 5.
+  for (const theme of ['light', 'dark']) {
+    await mock({ reset: true, config: { port: '45989' }, net: { routerWan: { state: 'no_answer', kind: 'unknown' } } });
+    const ctx = await context(browser, theme, { width: 390, height: 844 });
+    trackRequests(ctx);
+    const page = await ctx.newPage();
+    await step(page, '3b', '&via=forward');
+    await h031Shot(page, `H031-390-step3b-${theme}`);
+    check(`H031 ${theme} 390px 3b: no sideways scroll`, (await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+    await step(page, '4', '&via=forward');
+    await page.waitForSelector('[data-wan-state="none"]');
+    await page.fill('[data-field="outside-address"]', DOC);
+    await page.waitForSelector('[data-manual-value]');
+    check(`H031 ${theme} 390px 4: typed value hidden (●●●:45989)`, (await page.textContent('[data-manual-value] [data-address]')).trim() === `${MASK}:45989`);
+    await h031Shot(page, `H031-390-step4-manual-${theme}`);
+    check(`H031 ${theme} 390px 4: no sideways scroll`, (await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+    await step(page, '5');
+    await h031Shot(page, `H031-390-step5-${theme}`);
+    check(`H031 ${theme} 390px 5: no sideways scroll`, (await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+    await ctx.close();
+  }
+
+  {
+    // H031 behaviour (light). Real mouse, touch (CDP touch events), keyboard; router states; typed address; requests.
+    await mock({ reset: true, config: { port: '45989' } });
+    const ctx = await context(browser, 'light', { width: 1366, height: 900 });
+    trackRequests(ctx);
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+    const page = await ctx.newPage();
+    await step(page, '4', '&via=forward');
+    await page.waitForSelector('[data-wan-state="ok"]');
+    const calls1 = (await last()).routerWanCalls;
+    check('H031 4: one router question on entering step 4', calls1 === 1, String(calls1));
+    // F1 mouse, pressed near the left edge (the 0.3.0 failure spot)
+    let h = await mouseHold(page, '[data-outside-value]', 'left');
+    check('H031 F1 mouse: shown while pressed (150 ms)', h.during === `${DOC}:45989`, h.during);
+    check('H031 F1 mouse: the button does not move when the value shows', h.sameSpot);
+    check('H031 F1 mouse: still shown after dragging 80 px off the button', h.dragged === `${DOC}:45989`, h.dragged);
+    await page.screenshot({ path: join(out, 'H031-step4-reveal-example-light.png'), fullPage: false });
+    results.shots.push({ name: 'H031-step4-reveal-example-light', path: '/arbs/remote?step=4', file: 'H031-step4-reveal-example-light.png' });
+    let after = await h.release();
+    check('H031 F1 mouse: hidden after letting go', after === `${MASK}:45989`, after);
+    for (const row of ['[data-wan-address]']) {
+      h = await mouseHold(page, row, 'center');
+      check(`H031 F1 mouse ${row}: shown while pressed`, h.during === DOC, h.during);
+      after = await h.release();
+      check(`H031 F1 mouse ${row}: hidden after letting go`, after === MASK, after);
+    }
+    // each row keeps its own state: pressing one does not show the other
+    {
+      const b = await page.locator('[data-wan-address] [data-reveal]').boundingBox();
+      await page.mouse.move(b.x + 5, b.y + b.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(120);
+      check('H031 F1: rows are independent', (await page.textContent('[data-outside-value] [data-address]')).trim() === `${MASK}:45989`);
+      await page.mouse.up();
+    }
+    // right button: nothing shown, context menu blocked
+    await page.evaluate(() => {
+      window.__cm = [];
+      window.addEventListener('contextmenu', (e) => window.__cm.push(e.defaultPrevented));
+    });
+    {
+      const b = await page.locator('[data-outside-value] [data-reveal]').boundingBox();
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+      await page.mouse.down({ button: 'right' });
+      await page.waitForTimeout(120);
+      const r = (await page.textContent('[data-outside-value] [data-address]')).trim();
+      await page.mouse.up({ button: 'right' });
+      await page.waitForTimeout(80);
+      const cm = await page.evaluate(() => window.__cm);
+      check('H031 F1 right button: not shown, context menu blocked', r === `${MASK}:45989` && cm.length >= 1 && cm.every(Boolean), `${r} ${JSON.stringify(cm)}`);
+    }
+    // keyboard: Space / Enter while held, other keys do nothing
+    await page.focus('[data-outside-value] [data-reveal]');
+    await page.keyboard.down(' ');
+    await page.waitForTimeout(80);
+    const kDown = (await page.textContent('[data-outside-value] [data-address]')).trim();
+    await page.keyboard.press('Shift');
+    const kShift = (await page.textContent('[data-outside-value] [data-address]')).trim();
+    await page.keyboard.up(' ');
+    await page.waitForTimeout(80);
+    const kUp = (await page.textContent('[data-outside-value] [data-address]')).trim();
+    check('H031 F1 keyboard Space: shown while held, other key keeps it, hidden on release', kDown === `${DOC}:45989` && kShift === kDown && kUp === `${MASK}:45989`, `${kDown} / ${kShift} / ${kUp}`);
+    await page.keyboard.down('Enter');
+    await page.waitForTimeout(80);
+    const eDown = (await page.textContent('[data-outside-value] [data-address]')).trim();
+    await page.keyboard.up('Enter');
+    await page.waitForTimeout(80);
+    check('H031 F1 keyboard Enter: shown while held, hidden on release', eDown === `${DOC}:45989` && (await page.textContent('[data-outside-value] [data-address]')).trim() === `${MASK}:45989`, eDown);
+    // copy works while hidden
+    await page.click('[data-outside-value] [data-copy]');
+    await page.waitForTimeout(150);
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    check('H031 4: copy gives the value for Moonlight (documentation example)', clip === `${DOC}:45989`, clip);
+    // "다시 물어보기" asks once more
+    await page.click('[data-action="wan-retry"]');
+    await page.waitForTimeout(300);
+    await page.waitForSelector('[data-wan-state="ok"]');
+    check('H031 4: "다시 물어보기" asks the router again', (await last()).routerWanCalls === calls1 + 1);
+    await h031Shot(page, 'H031-step4-public-light', false);
+
+    // router: private (two routers) and 100.64 (carrier) -> no value, guidance + typed input
+    for (const [kind, name] of [
+      ['private', 'private'],
+      ['cgnat', 'cgnat'],
+    ]) {
+      await mock({ net: { routerWan: { state: 'ok', kind } } });
+      await step(page, '4', '&via=forward');
+      await page.waitForSelector('[data-wan-state="private"]');
+      check(`H031 4 router ${name}: two-routers guidance, no value, typed input offered`, !(await page.isVisible('[data-outside-value]')) && (await page.isVisible('[data-manual]')) && (await page.isVisible('[data-go-3b]')));
+      if (kind === 'private') await h031Shot(page, 'H031-step4-private-light', false);
+    }
+    // router gives nothing / older server (404): typed input
+    for (const [patch, name] of [
+      [{ routerWan: { state: 'no_router', kind: 'unknown' }, routerWanFail: false }, 'no-router'],
+      [{ routerWanFail: true }, 'older-server-404'],
+    ]) {
+      await mock({ net: patch });
+      await step(page, '4', '&via=forward');
+      await page.waitForSelector('[data-wan-state="none"]');
+      check(`H031 4 ${name}: "직접 넣기" shown`, (await page.isVisible('[data-manual]')) && !(await page.isVisible('[data-outside-value]')));
+    }
+    check('H031 4: outside check link hidden while its address is empty', !(await page.isVisible('[data-external-check]')));
+    await page.fill('[data-field="outside-address"]', '192.168.217.43');
+    check('H031 4 typed private address refused', (await page.getAttribute('[data-outside-error]', 'data-outside-error')) === 'private' && !(await page.isVisible('[data-manual-value]')));
+    await page.fill('[data-field="outside-address"]', 'not an address');
+    check('H031 4 typed text that is not an address refused', (await page.getAttribute('[data-outside-error]', 'data-outside-error')) === 'format');
+    await page.fill('[data-field="outside-address"]', `http://${DOC}:1234/`);
+    await page.waitForSelector('[data-manual-value]');
+    check('H031 4 typed address -> value with this PC port (hidden), port replaced note', (await page.textContent('[data-manual-value] [data-address]')).trim() === `${MASK}:45989` && (await page.isVisible('[data-port-replaced]')));
+    h = await mouseHold(page, '[data-manual-value]', 'left');
+    check('H031 4 typed value: shown while pressed', h.during === `${DOC}:45989`, h.during);
+    await page.screenshot({ path: join(out, 'H031-step4-manual-reveal-example-light.png'), fullPage: false });
+    results.shots.push({ name: 'H031-step4-manual-reveal-example-light', path: '/arbs/remote?step=4', file: 'H031-step4-manual-reveal-example-light.png' });
+    after = await h.release();
+    check('H031 4 typed value: hidden after letting go', after === `${MASK}:45989`, after);
+    await page.click('[data-manual-value] [data-copy]');
+    await page.waitForTimeout(150);
+    check('H031 4 typed value: copy', (await page.evaluate(() => navigator.clipboard.readText())) === `${DOC}:45989`);
+    const stored = await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }) + location.href);
+    check('H031 4: the typed address is not in storage or the address bar', !stored.includes('203.0.113'), stored.includes('203.0.113') ? 'found' : '');
+    await h031Shot(page, 'H031-step4-manual-light', false);
+
+    // Tailscale way: no router question, tailnet value
+    await mock({ reset: true, config: { port: '45989' } });
+    const before = (await last()).routerWanCalls;
+    await step(page, '4', '&via=tailscale');
+    await page.waitForTimeout(300);
+    check('H031 4 Tailscale: no router question, tailnet value hidden', (await last()).routerWanCalls === before && (await page.textContent('[data-s4-tailnet] [data-address]')).trim() === `${MASK}:45989`);
+    await h031Shot(page, 'H031-step4-tailscale-light', false);
+    check('H031 4 PIN link goes to 새 기기 연결', (await page.getAttribute('[data-pin-link]', 'href')) === '/arbs/devices/pair');
+
+    // touch: long press (CDP touch events) shows, no context menu, release hides
+    const tctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: 'ko-KR' });
+    trackRequests(tctx);
+    await tctx.route('https://api.github.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(releases) }));
+    await tctx.route(/^https:\/\/(?!api\.github\.com)/, (route) => route.abort());
+    const tp = await tctx.newPage();
+    await step(tp, '4', '&via=forward');
+    await tp.waitForSelector('[data-wan-state="ok"]');
+    await tp.evaluate(() => {
+      window.__cm = [];
+      window.__sel = 0;
+      window.addEventListener('contextmenu', (e) => window.__cm.push(e.defaultPrevented));
+      document.addEventListener('selectionchange', () => (window.__sel += document.getSelection().toString().length));
+    });
+    const tb = tp.locator('[data-outside-value] [data-reveal]');
+    await tb.scrollIntoViewIfNeeded();
+    const tbox = await tb.boundingBox();
+    const cdp = await tctx.newCDPSession(tp);
+    const tx = tbox.x + 6;
+    const ty = tbox.y + tbox.height / 2;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tx, y: ty }] });
+    await tp.waitForTimeout(150);
+    const t150 = (await tp.textContent('[data-outside-value] [data-address]')).trim();
+    await tp.waitForTimeout(650);
+    const t800 = (await tp.textContent('[data-outside-value] [data-address]')).trim();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: tx + 40, y: ty + 10 }] });
+    await tp.waitForTimeout(100);
+    const tMove = (await tp.textContent('[data-outside-value] [data-address]')).trim();
+    await tp.screenshot({ path: join(out, 'H031-390-step4-touch-hold-example-light.png'), fullPage: false });
+    results.shots.push({ name: 'H031-390-step4-touch-hold-example-light', path: '/arbs/remote?step=4', file: 'H031-390-step4-touch-hold-example-light.png' });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await tp.waitForTimeout(120);
+    const tUp = (await tp.textContent('[data-outside-value] [data-address]')).trim();
+    const tcm = await tp.evaluate(() => ({ cm: window.__cm, sel: window.__sel }));
+    check('H031 F1 touch: shown while held (150 ms and 800 ms long press)', t150 === `${DOC}:45989` && t800 === `${DOC}:45989`, `${t150} / ${t800}`);
+    check('H031 F1 touch: still shown when the finger slides', tMove === `${DOC}:45989`, tMove);
+    check('H031 F1 touch: hidden after lifting the finger', tUp === `${MASK}:45989`, tUp);
+    check('H031 F1 touch: no context menu (blocked if raised), no text selected', tcm.cm.every(Boolean) && tcm.sel === 0, JSON.stringify(tcm));
+    results.h031.touch = { t150: t150 === `${DOC}:45989`, t800: t800 === `${DOC}:45989`, tMove: tMove === `${DOC}:45989`, hiddenAfter: tUp === `${MASK}:45989`, contextmenu: tcm.cm };
+    await tctx.close();
+
+    // finish step: nothing changed -> no advanced box; prev_port -> open
+    await mock({ reset: true });
+    const fctx = await context(browser, 'light');
+    trackRequests(fctx);
+    const fp = await fctx.newPage();
+    await fp.goto(`${base}/arbs/remote?step=5`);
+    await fp.waitForSelector('[data-remote-step="5"]');
+    await fp.evaluate(() => sessionStorage.clear());
+    await fp.reload();
+    await fp.waitForSelector('[data-remote-step="5"]');
+    await fp.waitForTimeout(250);
+    check('H031 5 nothing changed: no "바꾼 설정 되돌리기" box', !(await fp.$('[data-advanced-revert]')));
+    check('H031 5 nothing chosen: method "아직 고르지 않음", result "아직 확인하지 않음"', (await fp.textContent('[data-summary-row="method"] td')).includes('아직 고르지 않음') && (await fp.textContent('[data-summary-row="result"] td')).includes('아직 확인하지 않음'));
+    check('H031 5 new pairing on: advice + link to step 4', await fp.isVisible('[data-pairing-advice] [data-go-4]'));
+    await h031Shot(fp, 'H031-step5-nothing-changed-light', false);
+    await mock({ reset: true, config: { port: '45989' } });
+    await fp.goto(`${base}/arbs/remote?step=5&prev_port=47989`);
+    await fp.waitForSelector('[data-remote-step="5"]');
+    await fp.waitForTimeout(300);
+    check('H031 5 after a port change link: advanced box open with the port row', (await fp.$eval('[data-advanced-revert]', (d) => d.open)) && (await fp.isVisible('[data-change="port"]')));
+    await fctx.close();
+
+    // ARBS icon on the ARBS WebUI: top bar logo, favicon links, login logo
+    await mock({ reset: true });
+    const ictx = await context(browser, 'light');
+    const ip = await ictx.newPage();
+    await ip.goto(`${base}/arbs/`);
+    await ip.waitForSelector('.page');
+    await ip.waitForTimeout(300);
+    const logo = await ip.$eval('.topbar__brand img', (img) => ({ src: img.getAttribute('src'), w: img.naturalWidth }));
+    check('H031 icon: top bar logo = /arbs/images/arbs-logo.svg and loads', logo.src === '/arbs/images/arbs-logo.svg' && logo.w > 0, JSON.stringify(logo));
+    const links = await ip.$$eval('link[rel="icon"], link[rel="apple-touch-icon"]', (ls) => ls.map((l) => l.getAttribute('href')));
+    check('H031 icon: favicon links (ico, svg, apple-touch)', JSON.stringify(links) === JSON.stringify(['/arbs/images/favicon.ico', '/arbs/images/icon.svg', '/arbs/images/apple-touch-icon.png']), JSON.stringify(links));
+    for (const href of links) {
+      const res = await ip.request.get(`${base}${href}`);
+      const r = [res.status(), res.headers()['content-type'], (await res.body()).length];
+      check(`H031 icon: ${href} served`, r[0] === 200 && r[2] > 0, JSON.stringify(r));
+    }
+    for (const theme of ['light', 'dark']) {
+      await ip.evaluate((t) => localStorage.setItem('arbs.theme', t), theme);
+      await ip.reload();
+      await ip.waitForSelector('.page');
+      await ip.waitForTimeout(250);
+      await ip.screenshot({ path: join(out, `H031-icon-topbar-${theme}.png`), clip: { x: 0, y: 0, width: 520, height: 64 } });
+      results.shots.push({ name: `H031-icon-topbar-${theme}`, path: '/arbs/', file: `H031-icon-topbar-${theme}.png` });
+    }
+    await mock({ auth: { authenticated: false, credentials_configured: true, login_required: true } });
+    for (const theme of ['light', 'dark']) {
+      await ip.evaluate((t) => localStorage.setItem('arbs.theme', t), theme);
+      await ip.goto(`${base}/arbs/`);
+      await ip.waitForSelector('[data-login-logo]');
+      await ip.waitForTimeout(300);
+      const ll = await ip.$eval('[data-login-logo]', (img) => img.naturalWidth);
+      check(`H031 icon ${theme}: login cover shows the ARBS logo`, ll > 0, String(ll));
+      await ip.screenshot({ path: join(out, `H031-icon-login-${theme}.png`), fullPage: false });
+      results.shots.push({ name: `H031-icon-login-${theme}`, path: '/arbs/', file: `H031-icon-login-${theme}.png` });
+    }
+    await mock({ reset: true });
+    // favicon sheet: the files the three web screens use, at 16 / 32 / 48 and x4
+    await ip.setContent(`<!doctype html><body style="margin:0;padding:12px;font:13px sans-serif;display:grid;grid-template-columns:repeat(2,auto);gap:12px 32px;background:#fff">
+      ${[
+        ['ARBS WebUI favicon.ico', `${base}/arbs/images/favicon.ico`],
+        ['ARBS WebUI icon.svg', `${base}/arbs/images/icon.svg`],
+        ['ARBS WebUI apple-touch-icon.png', `${base}/arbs/images/apple-touch-icon.png`],
+        ['v1 / v2 arbs-favicon.ico (/images/)', `${base}/images/arbs-favicon.ico`],
+        ['v1 / v2 logo arbs-logo-45.png (/images/)', `${base}/images/arbs-logo-45.png`],
+      ]
+        .map(([label, src]) => `<div>${label}</div><div style="display:flex;gap:10px;align-items:end">${[16, 32, 48].map((s) => `<img src="${src}" width="${s}" height="${s}">`).join('')}<img src="${src}" width="64" height="64" style="image-rendering:pixelated"><span style="background:#1c1917;padding:6px;display:flex;gap:10px">${[16, 32].map((s) => `<img src="${src}" width="${s}" height="${s}">`).join('')}</span></div>`)
+        .join('')}</body>`);
+    await ip
+      .waitForFunction(() => [...document.images].every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 5000 })
+      .catch(() => undefined);
+    const broken = await ip.evaluate(() => [...document.images].filter((i) => !i.naturalWidth).map((i) => i.getAttribute('src')));
+    check('H031 icon: every favicon / logo file in the sheet loads', broken.length === 0, JSON.stringify(broken));
+    await ip.screenshot({ path: join(out, 'H031-icon-favicons.png'), fullPage: true });
+    results.shots.push({ name: 'H031-icon-favicons', path: '(sheet)', file: 'H031-icon-favicons.png' });
+    await ictx.close();
+    await ctx.close();
+    const outside = results.h031.requests.filter((h) => h !== 'api.github.com');
+    check('H031 D6: no request to any outside host from the remote access page (api.github.com = update check only)', outside.length === 0, JSON.stringify([...new Set(results.h031.requests)]));
+  }
+
 
   // NET2 narrow (390 px): wizard pages and the memo-3 drawer + save bar case.
   results.net2.drawer = {};

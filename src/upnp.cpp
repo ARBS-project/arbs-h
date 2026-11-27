@@ -441,4 +441,61 @@ namespace upnp {
   arbs::netpolicy::upnp_status_t last_status() {
     return g_last_status.get();
   }
+
+  // ARBS-H 0.3.1 router-wan begin
+  // Read only: SSDP discovery + GetExternalIPAddress on a LAN router. No mapping / delete / pinhole call, no log line,
+  // independent of the upnp setting. Only LAN URLs are followed (arbs::netpolicy::lan_url).
+  static std::mutex g_router_wan_mutex;
+
+  arbs::netpolicy::router_wan_t read_external_address() noexcept {
+    using arbs::netpolicy::router_wan_e;
+    using arbs::netpolicy::router_wan_t;
+
+    std::unique_lock lock {g_router_wan_mutex, std::try_to_lock};
+    if (!lock.owns_lock()) {
+      return router_wan_t {router_wan_e::busy};
+    }
+
+    try {
+      int err = 0;
+      device_t device {upnpDiscover(2000, nullptr, nullptr, 0, IPv4, 2, &err)};
+      if (!device || err) {
+        return router_wan_t {router_wan_e::no_router};
+      }
+
+      for (auto dev = device.get(); dev != nullptr; dev = dev->pNext) {
+        if (!dev->descURL || !arbs::netpolicy::lan_url(dev->descURL)) {
+          continue;
+        }
+
+        UPNPUrls urls {};
+        IGDdatas data {};
+        std::array<char, INET6_ADDRESS_STRLEN> lan_addr {};
+        const int found = UPNP_GetIGDFromUrl(dev->descURL, &urls, &data, lan_addr.data(), (int) lan_addr.size());
+        lan_addr.fill('\0');
+        if (found != 1) {
+          continue;
+        }
+
+        router_wan_t result {router_wan_e::no_answer};
+        if (urls.controlURL && arbs::netpolicy::lan_url(urls.controlURL) && data.first.servicetype[0] != '\0') {
+          std::array<char, INET6_ADDRESS_STRLEN> ext {};
+          if (UPNP_GetExternalIPAddress(urls.controlURL, data.first.servicetype, ext.data()) == 0) {
+            ext.back() = '\0';
+            result = arbs::netpolicy::router_wan_from_text(std::string_view {ext.data()});
+          }
+          ext.fill('\0');
+        }
+        FreeUPNPUrls(&urls);
+        if (result.state == router_wan_e::ok) {
+          return result;
+        }
+      }
+      return router_wan_t {router_wan_e::no_answer};
+    } catch (...) {
+      return router_wan_t {router_wan_e::no_answer};
+    }
+  }
+
+  // ARBS-H 0.3.1 router-wan end
 }  // namespace upnp

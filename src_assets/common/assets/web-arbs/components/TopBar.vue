@@ -10,8 +10,8 @@ import { useUiStore } from '@/stores/ui';
 const { t, locale } = useI18n();
 const ui = useUiStore();
 const themes: ThemePreference[] = ['light', 'dark', 'system'];
-// Served by ARBS-H at the web root (not bundled), so it is bound instead of imported.
-const logo = '/images/logo-apollo-45.png';
+// Served by ARBS-H from /arbs/images/ (public folder, not bundled), so it is bound instead of imported. 0.3.1: ARBS logo.
+const logo = '/arbs/images/arbs-logo.svg';
 
 function setLang(value: ArbsLocale): void {
   locale.value = value;

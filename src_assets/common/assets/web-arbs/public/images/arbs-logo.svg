@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="1024" height="1024">
+  <title>ARBS</title>
+  <rect width="64" height="64" rx="14" fill="#c2410c"/>
+  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.5 40H11A21 24 0 0 1 53 40H60.5" stroke-width="4.5"/>
+    <g transform="translate(32 39) scale(.78) translate(-32 -36.75)" stroke-width="4.2">
+      <path d="M20 25C17 25 15.5 26.5 14.5 28.5C12.5 32.5 11 38.5 10.8 43C10.6 46.5 12.8 48.5 15.3 48.5C17 48.5 18 47.6 19 46.6L23 42.8C23.8 42 24.8 41.6 26 41.6H38C39.2 41.6 40.2 42 41 42.8L45 46.6C46 47.6 47 48.5 48.7 48.5C51.2 48.5 53.4 46.5 53.2 43C53 38.5 51.5 32.5 49.5 28.5C48.5 26.5 47 25 44 25C42 25 40.8 25.7 39.6 26.6C38.8 27.2 38 27.5 37 27.5H27C26 27.5 25.2 27.2 24.4 26.6C23.2 25.7 22 25 20 25Z"/>
+    </g>
+    <path d="M24.5 37q1.875-2.8 3.75 0t3.75 0t3.75 0t3.75 0" stroke-width="2.8"/>
+  </g>
+</svg>

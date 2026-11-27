@@ -95,6 +95,12 @@ test('dynamic key families are complete', () => {
     'remote.w_': ['overlaps_sunshine', 'dynamic_range', 'same_as_now'],
     'remote.k_': ['upnp', 'origin_web_ui_allowed', 'port', 'lan_encryption_mode', 'wan_encryption_mode', 'enable_pairing'],
     'remote.g_': ['asus', 'tplink', 'stackon'],
+    // H031 (0.3.1): outside step, finish summary, plain-language values
+    'remote.s4_manual_e_': ['format', 'private'],
+    'remote.sum_': ['method', 'rules', 'result', 'pairing'],
+    'remote.sum_via_': ['tailscale', 'forward', 'upnp', 'none'],
+    'remote.sum_result_': ['ok', 'fail', 'none'],
+    'remote.v_': ['enabled', 'disabled', 'none', 'wan_off', 'wan_auto', 'wan_always', 'origin_pc', 'origin_lan', 'origin_wan'],
   };
   for (const [prefix, values] of Object.entries(families)) {
     for (const v of values) {
@@ -133,5 +139,36 @@ test('NET2 fixed texts: other VPNs, link-only consent, port family benefit, no i
   assert.equal(K['nav.remote'], '외부 접속');
   for (const [k, v] of Object.entries({ ...K, ...E })) {
     if (k.startsWith('remote.')) assert.doesNotMatch(v, /\bNET[0-9]\b|EA-|\bH0[0-9]{2}\b|\bD[0-9]{1,2}\b|\bP[0-9]\b/, k);
+  }
+});
+
+test('H031: no setting key names (English config words) in the remote access texts', () => {
+  for (const [k, v] of Object.entries({ ...K, ...E })) {
+    if (!k.startsWith('remote.')) continue;
+    assert.doesNotMatch(v, /[a-z0-9]+_[a-z0-9_]+/i, k);
+    assert.doesNotMatch(v, /\((lan|wan|pc)\)/, k);
+    assert.doesNotMatch(v, /origin_web_ui_allowed|lan_encryption_mode|wan_encryption_mode|enable_pairing/, k);
+  }
+  for (const gone of ['remote.s5_wan_enc', 'remote.s5_none', 'remote.s3b_addr_default', 'remote.s3b_addr_port', 'remote.s3b_pairing']) {
+    assert.ok(!(gone in K) && !(gone in E), gone);
+  }
+});
+
+test('H031: step names, outside step and finish texts', () => {
+  assert.equal(K['remote.step_4'], '밖에서 접속');
+  assert.equal(K['remote.step_5'], '마무리');
+  assert.equal(K['remote.s5_title'], '마무리');
+  assert.equal(K['remote.s5_advanced'], '바꾼 설정 되돌리기(고급)');
+  assert.equal(K['remote.v_wan_auto'], '가능하면 켬(권장)');
+  assert.match(K['remote.s4_wan_changes']!, /통신사가 바꿀 수 있어요/);
+  assert.match(K['remote.s4_ddns']!, /DDNS/);
+  assert.match(K['remote.s4_manual_help']!, /인터넷\(WAN\) 주소/);
+  assert.match(K['remote.s4_manual_not_saved']!, /저장하지 않습니다/);
+  assert.match(K['remote.s4_wan_note']!, /읽기만/);
+  assert.match(K['remote.s4_2']!, /ARBS-W·ARBS-A/);
+  assert.doesNotMatch(K['remote.s4_ok_text']!, /새 페어링/);
+  // examples are documentation addresses only
+  for (const [k, v] of Object.entries({ ...K, ...E })) {
+    for (const m of v.matchAll(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/g)) assert.ok(m[0].startsWith('203.0.113.'), `${k}: ${m[0]}`);
   }
 });

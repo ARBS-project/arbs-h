@@ -8,6 +8,8 @@ import { ApiError } from '@/api/client';
 import { passwordReason } from '@/logic/rules';
 import { useHostStore } from '@/stores/host';
 
+// 0.3.1 (H031): ARBS logo above the title (served from /arbs/images/, not bundled, so it is bound instead of imported).
+const logo = '/arbs/images/arbs-logo.svg';
 const { t } = useI18n();
 const host = useHostStore();
 const username = ref('');
@@ -49,6 +51,7 @@ async function submit(): Promise<void> {
 <template>
   <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="login-title" data-feature="H-NAV-12">
     <form class="overlay__panel card" novalidate @submit.prevent="submit">
+      <img class="overlay__logo" :src="logo" alt="" width="40" height="40" data-login-logo />
       <template v-if="setup">
         <h2 id="login-title" class="card__title" data-feature="H-AUTH-02" data-feature-2="H-V2AUTH-02">
           {{ t('auth.create_title') }}

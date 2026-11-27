@@ -386,4 +386,134 @@ namespace {
     EXPECT_FALSE(bad.ok);
     EXPECT_EQ(bad.code, SimpleWeb::StatusCode::client_error_unauthorized);
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // 0.3.1 (H031 F3): GET /api/network/router-wan, pure parts (the network call itself is checked by T6 S14).
+  // ---------------------------------------------------------------------------------------------
+
+  TEST(ArbsRouterWan, PublicAddressIsKeptOthersAreNot) {
+    const auto pub = np::router_wan_from_text("203.0.113.7");
+    EXPECT_EQ(pub.state, np::router_wan_e::ok);
+    EXPECT_EQ(pub.kind, np::wan_kind_e::public_);
+    EXPECT_EQ(pub.address, "203.0.113.7");
+    // Private / 100.64 (two routers, carrier CGNAT): answered, kind only, no address (P-10).
+    const auto priv = np::router_wan_from_text("192.168.217.43");
+    EXPECT_EQ(priv.state, np::router_wan_e::ok);
+    EXPECT_EQ(priv.kind, np::wan_kind_e::private_);
+    EXPECT_TRUE(priv.address.empty());
+    const auto ten = np::router_wan_from_text("10.217.0.43");
+    EXPECT_EQ(ten.kind, np::wan_kind_e::private_);
+    EXPECT_TRUE(ten.address.empty());
+    const auto cg = np::router_wan_from_text("100.64.217.43");
+    EXPECT_EQ(cg.state, np::router_wan_e::ok);
+    EXPECT_EQ(cg.kind, np::wan_kind_e::cgnat);
+    EXPECT_TRUE(cg.address.empty());
+    EXPECT_EQ(np::router_wan_from_text("100.127.217.43").kind, np::wan_kind_e::cgnat);
+    EXPECT_EQ(np::router_wan_from_text("100.128.217.43").kind, np::wan_kind_e::public_);
+    // Nothing usable: no answer, unknown, no address.
+    for (const char *text : {"", "0.0.0.0", "127.0.0.1", "224.0.0.7", "203.0.113", "203.0.113.256", " 203.0.113.7", "203.0.113.7 ", "x", "2001:db8::7"}) {
+      const auto r = np::router_wan_from_text(text);
+      EXPECT_EQ(r.state, np::router_wan_e::no_answer) << text;
+      EXPECT_EQ(r.kind, np::wan_kind_e::unknown) << text;
+      EXPECT_TRUE(r.address.empty()) << text;
+    }
+  }
+
+  TEST(ArbsRouterWan, OnlyLanUrlsAreFollowed) {
+    EXPECT_TRUE(np::lan_url("http://192.168.217.43:5000/rootDesc.xml"));
+    EXPECT_TRUE(np::lan_url("http://10.217.0.43:49152/ctl/IPConn"));
+    EXPECT_TRUE(np::lan_url("http://172.20.217.43/desc.xml"));
+    EXPECT_TRUE(np::lan_url("http://169.254.217.43:80/x"));
+    EXPECT_FALSE(np::lan_url("http://203.0.113.7:5000/rootDesc.xml")) << "public host";
+    EXPECT_FALSE(np::lan_url("http://100.64.217.43/x")) << "100.64 is not the home LAN";
+    EXPECT_FALSE(np::lan_url("http://127.0.0.1:5000/x"));
+    EXPECT_FALSE(np::lan_url("http://router.example.com/x")) << "a name could resolve anywhere";
+    EXPECT_FALSE(np::lan_url("http://[2001:db8::7]:5000/x"));
+    EXPECT_FALSE(np::lan_url("http://[fe80::7]:5000/x"));
+    EXPECT_FALSE(np::lan_url(""));
+    EXPECT_FALSE(np::lan_url("rootDesc.xml"));
+    EXPECT_FALSE(np::lan_url("http://user@203.0.113.7/x"));
+    EXPECT_TRUE(np::lan_url("http://user@192.168.217.43/x"));
+  }
+
+  TEST(ArbsRouterWan, ReplyShape) {
+    const auto pub = nd::router_wan_json(np::router_wan_from_text("203.0.113.7"));
+    EXPECT_TRUE(pub["status"].get<bool>());
+    EXPECT_EQ(pub["router_wan"]["state"], "ok");
+    EXPECT_EQ(pub["router_wan"]["kind"], "public");
+    EXPECT_EQ(pub["router_wan"]["address"], "203.0.113.7");
+    EXPECT_EQ(pub["router_wan"].size(), 3u);
+    const auto cg = nd::router_wan_json(np::router_wan_from_text("100.64.217.43"));
+    EXPECT_EQ(cg["router_wan"]["state"], "ok");
+    EXPECT_EQ(cg["router_wan"]["kind"], "cgnat");
+    EXPECT_FALSE(cg["router_wan"].contains("address"));
+    EXPECT_EQ(cg.dump().find("100.64.217.43"), std::string::npos);
+    const auto priv = nd::router_wan_json(np::router_wan_from_text("192.168.217.43"));
+    EXPECT_EQ(priv["router_wan"]["kind"], "private");
+    EXPECT_EQ(priv.dump().find("192.168.217.43"), std::string::npos);
+    // A hand-made result with a non-public kind never carries its text out.
+    np::router_wan_t forged {np::router_wan_e::ok, np::wan_kind_e::private_, "192.168.217.43"};
+    EXPECT_FALSE(nd::router_wan_json(forged)["router_wan"].contains("address"));
+    for (const auto state : {np::router_wan_e::no_router, np::router_wan_e::no_answer, np::router_wan_e::busy}) {
+      np::router_wan_t r {state, np::wan_kind_e::public_, "203.0.113.7"};
+      const auto out = nd::router_wan_json(r);
+      EXPECT_EQ(out["router_wan"]["state"], std::string(np::to_string(state)));
+      EXPECT_EQ(out["router_wan"]["kind"], "unknown");
+      EXPECT_FALSE(out["router_wan"].contains("address"));
+    }
+    EXPECT_EQ(nd::cache_control, "no-store");
+    // The diagnostics body is unchanged: still no WAN address there.
+    EXPECT_FALSE(nd::build(sample_inputs())["upnp"].contains("wan_address"));
+    EXPECT_FALSE(nd::build(sample_inputs()).contains("router_wan"));
+  }
+
+  // Building the router-wan reply writes no log record, so the outside address cannot reach a log.
+  TEST(ArbsRouterWan, NothingIsLogged) {
+    namespace logging = boost::log;
+    auto stream = boost::make_shared<std::ostringstream>();
+    auto backend = boost::make_shared<logging::sinks::text_ostream_backend>();
+    backend->add_stream(stream);
+    backend->auto_flush(true);
+    auto sink = boost::make_shared<logging::sinks::synchronous_sink<logging::sinks::text_ostream_backend>>(backend);
+    std::size_t records = 0;
+    sink->set_filter([&records](const logging::attribute_value_set &) {
+      ++records;
+      return true;
+    });
+    logging::core::get()->add_sink(sink);
+    {
+      logging::sources::logger probe;
+      BOOST_LOG(probe) << "probe";
+      ASSERT_EQ(records, 1u);
+      records = 0;
+      stream->str("");
+    }
+    const auto body = nd::router_wan_json(np::router_wan_from_text("203.0.113.7")).dump();
+    (void) nd::router_wan_json(np::router_wan_from_text("100.64.217.43"));
+    (void) np::lan_url("http://192.168.217.43:5000/rootDesc.xml");
+    logging::core::get()->remove_sink(sink);
+    sink->flush();
+    EXPECT_EQ(records, 0u);
+    const auto logged = stream->str();
+    for (const char *address : {"203.0.113.7", "100.64.217.43", "192.168.217.43"}) {
+      EXPECT_EQ(logged.find(address), std::string::npos) << address;
+    }
+    EXPECT_NE(body.find("203.0.113.7"), std::string::npos) << "the screen gets the public address (shown hidden)";
+  }
+
+  TEST(ArbsRouterWan, SignInRequired) {
+    confighttp::policy::RequestAuthDependencies deps;
+    deps.remote_allowed = [](const std::string &) { return true; };
+    deps.credentials_configured = [] { return true; };
+    deps.credentials_valid = [](const std::string &, const std::string &) { return false; };
+    deps.bearer_valid = [](const std::string &, const std::string &, const std::string &) { return false; };
+    deps.session_valid = [](const std::string &) { return false; };
+    deps.decode_base64 = [](const std::string &value) { return value; };
+    deps.cookie_unescape = [](const std::string &value) { return value; };
+    deps.https_port = [] { return std::uint16_t {45990}; };
+    const confighttp::policy::RequestAuthPolicy auth {std::move(deps)};
+    const auto result = auth.check("127.0.0.1", "", "/api/network/router-wan", "GET");
+    EXPECT_FALSE(result.ok);
+    EXPECT_EQ(result.code, SimpleWeb::StatusCode::client_error_unauthorized);
+  }
 }  // namespace

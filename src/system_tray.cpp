@@ -12,10 +12,10 @@
     #include <Windows.h>
     #include <accctrl.h>
     #include <aclapi.h>
-    #define TRAY_ICON WEB_DIR "images/apollo.ico"
-    #define TRAY_ICON_PLAYING WEB_DIR "images/apollo-playing.ico"
-    #define TRAY_ICON_PAUSING WEB_DIR "images/apollo-pausing.ico"
-    #define TRAY_ICON_LOCKED WEB_DIR "images/apollo-locked.ico"
+    #define TRAY_ICON WEB_DIR "images/arbs-tray.ico"  // ARBS-H 0.3.1 (H031): ARBS tray icons, old files kept
+    #define TRAY_ICON_PLAYING WEB_DIR "images/arbs-tray-playing.ico"
+    #define TRAY_ICON_PAUSING WEB_DIR "images/arbs-tray-pausing.ico"
+    #define TRAY_ICON_LOCKED WEB_DIR "images/arbs-tray-locked.ico"
   #elif defined(__linux__) || defined(linux) || defined(__linux)
     #define TRAY_ICON SUNSHINE_TRAY_PREFIX "-tray"
     #define TRAY_ICON_PLAYING SUNSHINE_TRAY_PREFIX "-playing"

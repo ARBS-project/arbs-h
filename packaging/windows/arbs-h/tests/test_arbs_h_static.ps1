@@ -11,9 +11,9 @@ param(
   [Parameter(Mandatory = $true)][string]$StageDir,
   [Parameter(Mandatory = $true)][string]$SetupExe,
   [string]$UninstallKeysFile = '',
-  [string]$Version = '0.3.0',
-  # H013 S11: commit the changes of this release start from (NET2 0.3.0: v0.2.2 = db6b5136f; H022 used v0.2.1 = abcf16b44; H021 used v0.2.0 = 5472d513a; UI1b used v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
-  [string]$BaseCommit = 'db6b5136f2c26b3172454927d359e2c8d1f12072'
+  [string]$Version = '0.3.1',
+  # H013 S11: commit the changes of this release start from (H031 0.3.1: v0.3.0 = 1fcfc4801; NET2 0.3.0: v0.2.2 = db6b5136f; H022 used v0.2.1 = abcf16b44; H021 used v0.2.0 = 5472d513a; UI1b used v0.1.3 = 9bf60beb9; H013 used v0.1.2 = 8967d7c87).
+  [string]$BaseCommit = '1fcfc48014c3202b7ef1e6acb3e0051bdcf4f83a'
 )
 $ErrorActionPreference = 'Stop'
 $pkg = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -291,6 +291,78 @@ Ok ($chText.Contains('register_api_route("^/api/network/diagnostics$", "GET", ge
 Ok (-not $iss.Contains('47984~48010')) 'S13 iss names no fixed port range'
 Ok ($helperText.Contains('$script:ArbsDefaultPort = 45989') -and -not $helperText.Contains('$script:StreamPorts')) 'S13 setup helper: new-install port 45989, no fixed port list'
 Ok (-not (([IO.File]::ReadAllText((Join-Path $pkg 'sunshine.conf'))) -match '(?m)^\s*port\s*=')) 'S13 template sunshine.conf has no port line (only a new config gets one)'
+
+# S14 (H031 0.3.1): the router's outside address is read only. Inside the marked upnp.cpp block: no mapping, delete
+# or pinhole call, no log line, no upnp-setting check; only LAN URLs are followed. The route signs in, logs nothing,
+# is not cached and runs off the io thread. The web page asks only this server (no outside service).
+$rwBegin = $upnpText.IndexOf('// ARBS-H 0.3.1 router-wan begin')
+$rwEnd = $upnpText.IndexOf('// ARBS-H 0.3.1 router-wan end')
+Ok ($rwBegin -gt 0 -and $rwEnd -gt $rwBegin) 'S14 upnp.cpp has the marked router-wan block'
+if ($rwBegin -gt 0 -and $rwEnd -gt $rwBegin) {
+  $rw = $upnpText.Substring($rwBegin, $rwEnd - $rwBegin)
+  foreach ($word in @('UPNP_AddPortMapping', 'UPNP_DeletePortMapping', 'UPNP_AddPinhole', 'UPNP_DeletePinhole', 'BOOST_LOG', 'flags[', 'print_req')) {
+    Ok (-not $rw.Contains($word)) "S14 router-wan block has no $word"
+  }
+  Ok ($rw.Contains('UPNP_GetExternalIPAddress(') -and $rw.Contains('upnpDiscover(')) 'S14 router-wan block: discovery + GetExternalIPAddress only'
+  Ok (([regex]::Matches($rw, 'arbs::netpolicy::lan_url\(')).Count -ge 2) 'S14 router-wan block follows LAN description and control URLs only'
+  Ok ($rw.Contains('std::try_to_lock') -and $rw.Contains('router_wan_e::busy')) 'S14 router-wan block: one request at a time (busy)'
+  Ok ($rw.Contains('router_wan_from_text(')) 'S14 router-wan block keeps the address only through router_wan_from_text (public only)'
+}
+$rwh = $chText.Substring($chText.IndexOf('void getRouterWan('))
+$rwh = $rwh.Substring(0, $rwh.IndexOf("`n  }") + 4)
+Ok ($rwh.IndexOf('authenticate(response, request)') -gt 0 -and $rwh.IndexOf('authenticate(response, request)') -lt $rwh.IndexOf('router_wan_json')) 'S14 router-wan handler signs in before asking'
+Ok (-not $rwh.Contains('print_req') -and -not $rwh.Contains('BOOST_LOG')) 'S14 router-wan handler logs nothing'
+Ok ($rwh.Contains('arbs::netdiag::cache_control')) 'S14 router-wan reply sent with Cache-Control no-store'
+Ok ($chText.Contains('register_blocking_api_route("^/api/network/router-wan$", "GET", getRouterWan);')) 'S14 router-wan route is GET only, on the blocking pool'
+$diagH = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\arbs_network_diagnostics.h'))
+Ok ($diagH -match '(?s)router_wan_json.*router_wan_e::ok && wan\.kind == netpolicy::wan_kind_e::public_') 'S14 reply carries the address only when it is public'
+$remoteTs = [IO.File]::ReadAllText((Join-Path $srcRoot 'src_assets\common\assets\web-arbs\logic\remote.ts'))
+$remoteVue = [IO.File]::ReadAllText((Join-Path $srcRoot 'src_assets\common\assets\web-arbs\views\RemoteAccessView.vue'))
+Ok ($remoteTs.Contains("export const EXTERNAL_CHECK_URL = '';")) 'S14 web: outside check link stays empty (hidden)'
+Ok ($remoteVue.Contains("apiGet<unknown>('/api/network/router-wan'") -and -not ($remoteVue -match "fetch\(|apiGet<[^>]*>\('https?:")) 'S14 web: the outside address is asked from this server only'
+
+# S15 (H031 0.3.1): ARBS icon. exe / tool / installer / shortcut / tray / web references point to the ARBS files; the
+# old Vibepollo / Apollo icon files are still in the tree (only references changed); the stage has the new files and
+# sunshine.exe and the tools carry the ARBS icon image.
+$winCmake = [IO.File]::ReadAllText((Join-Path $srcRoot 'cmake\compile_definitions\windows.cmake'))
+Ok ($winCmake.Contains('set(PROJECT_ICON_PATH "${CMAKE_SOURCE_DIR}/branding/arbs.ico")')) 'S15 sunshine.exe icon = branding/arbs.ico'
+Ok ($winCmake.Contains('set(ARBS_TOOL_ICON "${PROJECT_ICON_PATH}")') -and ([IO.File]::ReadAllText((Join-Path $srcRoot 'src\platform\windows\tool_version.rc.in'))).Contains('1 ICON "@ARBS_TOOL_ICON@"')) 'S15 tool exes get the same icon'
+Ok ($iss.Contains('#define AppIcon SrcRoot + "\branding\arbs.ico"')) 'S15 installer SetupIconFile default = branding\arbs.ico'
+Ok (([regex]::Matches($iss, '\.cmd"; WorkingDir: "\{app\}\\tools\\arbs-h"; IconFilename: "\{app\}\\sunshine\.exe"')).Count -eq 3) 'S15 the three .cmd shortcuts use the sunshine.exe icon'
+$trayText = [IO.File]::ReadAllText((Join-Path $srcRoot 'src\system_tray.cpp'))
+foreach ($m in @('TRAY_ICON WEB_DIR "images/arbs-tray.ico"', 'TRAY_ICON_PLAYING WEB_DIR "images/arbs-tray-playing.ico"', 'TRAY_ICON_PAUSING WEB_DIR "images/arbs-tray-pausing.ico"', 'TRAY_ICON_LOCKED WEB_DIR "images/arbs-tray-locked.ico"')) {
+  Ok ($trayText.Contains($m)) "S15 tray $($m.Split(' ')[0])"
+}
+Ok ($chText.Contains('WEB_DIR "images/arbs-favicon.ico"') -and $chText.Contains('WEB_DIR "images/arbs-logo-45.png"')) 'S15 /images/sunshine.ico and the old logo address serve the ARBS files'
+$webRoot = Join-Path $srcRoot 'src_assets\common\assets'
+$oldRefs = @()
+foreach ($ui in @('web-arbs', 'web-legacy', 'web')) {
+  $oldRefs += @(Get-ChildItem -LiteralPath (Join-Path $webRoot $ui) -Recurse -File -Include *.vue, *.html, *.ts |
+      Where-Object { $_.FullName -notmatch '\\node_modules\\|\\scripts\\|\\dist\\' } |
+      Where-Object { (Select-String -LiteralPath $_.FullName -Pattern 'logo-apollo|apollo\.ico|sunshine\.ico' -Quiet) } |
+      ForEach-Object { $_.Name })
+}
+Ok ($oldRefs.Count -eq 0) ('S15 web screens (ARBS, classic, v2) reference no old icon' + $(if ($oldRefs.Count) { ': ' + ($oldRefs -join ', ') } else { '' }))
+foreach ($old in @('apollo.ico', 'src_assets\common\assets\web-legacy\public\images\apollo.ico', 'src_assets\common\assets\web\public\images\apollo.ico', 'src_assets\common\assets\web-legacy\public\images\logo-apollo-45.png')) {
+  Ok (Test-Path -LiteralPath (Join-Path $srcRoot $old)) "S15 old file kept: $old"
+}
+$newStage = @('assets\web\images\arbs-tray.ico', 'assets\web\images\arbs-tray-playing.ico', 'assets\web\images\arbs-tray-pausing.ico',
+  'assets\web\images\arbs-tray-locked.ico', 'assets\web\images\arbs-favicon.ico', 'assets\web\images\arbs-logo-45.png',
+  'assets\web\v2\images\arbs-favicon.ico', 'assets\web\v2\images\arbs-logo-45.png', 'assets\web\v2\images\arbs-apple-touch-180.png',
+  'assets\web\arbs\images\favicon.ico', 'assets\web\arbs\images\icon.svg', 'assets\web\arbs\images\apple-touch-icon.png', 'assets\web\arbs\images\arbs-logo.svg')
+foreach ($f in $newStage) { Ok (Test-Path -LiteralPath (Join-Path $StageDir $f)) "S15 stage has $f" }
+# The 16 px image of branding\arbs.ico (first ICO entry) is stored as is in each exe's icon resource.
+$icoBytes = [IO.File]::ReadAllBytes((Join-Path $srcRoot 'branding\arbs.ico'))
+$firstSize = [BitConverter]::ToUInt32($icoBytes, 6 + 8)
+$firstOffset = [BitConverter]::ToUInt32($icoBytes, 6 + 12)
+$latin = [Text.Encoding]::GetEncoding(28591)
+$needle = $latin.GetString($icoBytes, [int]$firstOffset, [int]$firstSize)
+foreach ($exe in @('sunshine.exe', 'tools\sunshinesvc.exe', 'tools\dxgi-info.exe', 'tools\audio-info.exe', 'tools\playnite-launcher.exe',
+    'tools\sunshine_wgc_capture.exe', 'tools\sunshine_end_stream_hotkey.exe', 'tools\sunshine_display_helper.exe')) {
+  $p = Join-Path $StageDir $exe
+  if (Test-Path -LiteralPath $p) { Ok ($latin.GetString([IO.File]::ReadAllBytes($p)).Contains($needle)) "S15 $exe carries the ARBS icon (16 px image found)" }
+  else { Ok $false "S15 $exe missing from stage" }
+}
 
 Ok (Test-Path -LiteralPath $SetupExe) 'setup.exe exists'
 $shaFile = "$SetupExe.sha256"

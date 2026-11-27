@@ -1689,7 +1689,8 @@ namespace confighttp {
   void getFaviconImage(resp_https_t response, req_https_t request) {
     print_req(request);
 
-    std::ifstream in(WEB_DIR "images/apollo.ico", std::ios::binary);
+    // ARBS-H 0.3.1 (H031): the ARBS icon (old images/apollo.ico stays installed).
+    std::ifstream in(WEB_DIR "images/arbs-favicon.ico", std::ios::binary);
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "image/x-icon");
     headers.emplace("X-Frame-Options", "DENY");
@@ -1708,7 +1709,8 @@ namespace confighttp {
   void getApolloLogoImage(resp_https_t response, req_https_t request) {
     print_req(request);
 
-    std::ifstream in(WEB_DIR "images/logo-apollo-45.png", std::ios::binary);
+    // ARBS-H 0.3.1 (H031): the ARBS logo for the old logo address too.
+    std::ifstream in(WEB_DIR "images/arbs-logo-45.png", std::ios::binary);
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "image/png");
     headers.emplace("X-Frame-Options", "DENY");
@@ -3305,6 +3307,19 @@ namespace confighttp {
     in.interfaces = platf::arbs_interface_addresses();
 #endif
     send_response(response, arbs::netdiag::build(in), arbs::netdiag::cache_control);
+  }
+
+  /**
+   * @brief ARBS-H 0.3.1 (H031 F3): the router's outside address for the "connect from outside" step.
+   * @details Sign-in required (blocking route wrapper + here). Read only: upnp::read_external_address asks the LAN
+   * router (GetExternalIPAddress), no port mapping, works whether the upnp setting is on or off. No print_req, nothing
+   * about this reply is logged, Cache-Control: no-store. The address is in the reply only when it is public.
+   */
+  void getRouterWan(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+    send_response(response, arbs::netdiag::router_wan_json(upnp::read_external_address()), arbs::netdiag::cache_control);
   }
 
   void getNightlyUpdateMetadata(resp_https_t response, req_https_t request) {
@@ -6534,6 +6549,8 @@ namespace confighttp {
     register_api_route("^/api/config$", "GET", getConfig);
     // ARBS-H 0.3.0 (S1): read-only, sign-in required, not logged.
     register_api_route("^/api/network/diagnostics$", "GET", getNetworkDiagnostics);
+    // ARBS-H 0.3.1 (H031): read-only router answer (UPnP discovery takes ~2 s): off the io thread, sign-in, not logged.
+    register_blocking_api_route("^/api/network/router-wan$", "GET", getRouterWan);
     register_api_route("^/api/config$", "POST", saveConfig);
     // Partial updates for config settings; merges with existing file and
     // removes keys when value is null or empty string.

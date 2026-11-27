@@ -392,4 +392,61 @@ namespace arbs::netpolicy {
     upnp_status_t value_ {};
   };
 
+  // ---------------------------------------------------------------------------------------------
+  // 0.3.1 (H031 F3): router's outside address for the "connect from outside" step, read only.
+  // The server asks the router on the same LAN (UPnP GetExternalIPAddress, no mapping); these are the pure parts.
+  // ---------------------------------------------------------------------------------------------
+
+  /// A UPnP device / control URL may be followed only when its host is a LAN address (private IPv4 or link-local).
+  /// Names, public addresses, IPv6 and unreadable URLs are refused, so a fake SSDP reply cannot send the request out.
+  inline bool lan_url(std::string_view url) {
+    const auto kind = url_host_kind(url);
+    return kind == to_string(addr_kind_e::private_v4) || kind == to_string(addr_kind_e::link_local);
+  }
+
+  enum class router_wan_e {
+    ok,  ///< the router answered (kind tells public / private / cgnat / unknown)
+    no_router,  ///< no UPnP device answered on the LAN
+    no_answer,  ///< a device was found but gave no external address
+    busy,  ///< another request is asking right now
+  };
+
+  constexpr std::string_view to_string(router_wan_e value) {
+    switch (value) {
+      case router_wan_e::ok:
+        return "ok";
+      case router_wan_e::no_router:
+        return "no_router";
+      case router_wan_e::no_answer:
+        return "no_answer";
+      case router_wan_e::busy:
+        return "busy";
+    }
+    return "no_answer";
+  }
+
+  struct router_wan_t {
+    router_wan_e state = router_wan_e::no_answer;
+    wan_kind_e kind = wan_kind_e::unknown;
+    std::string address;  ///< only for a public address (private / 100.64 values are never kept, P-10)
+  };
+
+  /// Router's GetExternalIPAddress text -> result. Empty, 0.0.0.0 or unreadable = no_answer; the text is kept only
+  /// when it is a public IPv4 address.
+  inline router_wan_t router_wan_from_text(std::string_view text) {
+    router_wan_t out;
+    if (text.empty() || !parse_v4(text)) {
+      return out;
+    }
+    out.kind = wan_kind_of(text);
+    if (out.kind == wan_kind_e::unknown) {
+      return out;  // 0.0.0.0, loopback, multicast, reserved
+    }
+    out.state = router_wan_e::ok;
+    if (out.kind == wan_kind_e::public_) {
+      out.address = std::string(text);
+    }
+    return out;
+  }
+
 }  // namespace arbs::netpolicy

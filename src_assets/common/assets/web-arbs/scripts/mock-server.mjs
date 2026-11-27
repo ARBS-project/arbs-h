@@ -2,6 +2,7 @@
 // H021: the 4 install default apps, restorable-system-apps, session history and host usage.
 // NET2 (0.3.0): GET /api/network/diagnostics with format-only example addresses (100.x.y.z, 192.168.x.y), never real
 // ones; PATCH of port / upnp answers restartRequired like the server.
+// H031 (0.3.1): GET /api/network/router-wan (documentation address 203.0.113.7 only), /arbs/images/ from the build.
 // Serves a built ARBS WebUI (vite build output) at /arbs/ and fake /api/* answers.
 // Local only (127.0.0.1). Not shipped: scripts/ is not part of the build.
 // Usage: node scripts/mock-server.mjs --dist <build dir> [--port 5180] [--images <dir>]
@@ -42,7 +43,12 @@ const initial = () => ({
       { kind: 'cgnat_v4', address: '100.x.y.z', tailscale_like: true },
     ],
     fail: false,
+    // H031 (0.3.1): GET /api/network/router-wan answer. Documentation address only (203.0.113.0/24), never a real one.
+    routerWan: { state: 'ok', kind: 'public', address: '203.0.113.7' },
+    routerWanFail: false,
+    routerWanDelay: 0,
   },
+  routerWanCalls: 0,
   devices: [
     {
       uuid: '11111111-2222-3333-4444-555555555555',
@@ -106,7 +112,7 @@ function restorable(apps) {
 }
 
 const LOG = [
-  '[2026-11-25 10:00:00.001]: Info: ARBS-H 0.3.0 (based on Vibepollo 2.18.9)',
+  '[2026-11-25 10:00:00.001]: Info: ARBS-H 0.3.1 (based on Vibepollo 2.18.9)',
   '[2026-11-25 10:00:00.120]: Info: Gamepad: usbip_ds5 (DualSense)',
   '[2026-11-25 10:00:01.500]: Warning: Display helper: snapshot missing',
   '[2026-11-25 10:00:02.010]: Info: Configuration UI available at [https://localhost:47990]',
@@ -161,7 +167,7 @@ const server = createServer(async (req, res) => {
     return json(res, { ok: true });
   }
   if (p === '/__mock/last') return json(res, state);
-  if (p.startsWith('/arbs/assets/')) return file(res, inside(dist, p.slice('/arbs/'.length)) ?? '');
+  if (p.startsWith('/arbs/assets/') || p.startsWith('/arbs/images/')) return file(res, inside(dist, p.slice('/arbs/'.length)) ?? '');
   if (p === '/arbs' || p.startsWith('/arbs/')) return file(res, join(dist, 'index.html'));
   if (p.startsWith('/images/')) return file(res, inside(images, p.slice('/images/'.length)) ?? '');
   if (!p.startsWith('/api/')) {
@@ -194,7 +200,7 @@ const server = createServer(async (req, res) => {
   if (p === '/api/metadata')
     return json(res, {
       status: true,
-      version: '0.3.0',
+      version: '0.3.1',
       platform: 'windows',
       architecture: 'x86_64',
       branch: 'arbs-h',
@@ -250,7 +256,7 @@ const server = createServer(async (req, res) => {
     if (!summary) return json(res, { status: false }, 404);
     return json(res, { ...summary, samples: samples(uuid), events: [], total_samples: 6, history_status: { available: true } });
   }
-  if (p === '/api/config' && m === 'GET') return json(res, { status: true, platform: 'windows', version: '0.3.0', ...state.config });
+  if (p === '/api/config' && m === 'GET') return json(res, { status: true, platform: 'windows', version: '0.3.1', ...state.config });
   if (p === '/api/config' && m === 'PATCH') {
     const patch = await body(req);
     const config = { ...state.config, ...patch };
@@ -288,6 +294,14 @@ const server = createServer(async (req, res) => {
         risk: { upnp_with_wan_origin: upnpOn && wan, origin_wan: wan },
       }),
     );
+  }
+  if (p === '/api/network/router-wan' && m === 'GET') {
+    // H031: like the server: read-only router answer, no-store; an older server answers 404.
+    state.routerWanCalls = (state.routerWanCalls ?? 0) + 1;
+    if (state.net.routerWanFail) return json(res, { status: false, error: 'Not Found' }, 404);
+    if (state.net.routerWanDelay) await new Promise((r) => setTimeout(r, state.net.routerWanDelay));
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ status: true, router_wan: state.net.routerWan }));
   }
   if (p === '/api/clients/list') return json(res, { status: true, platform: 'windows', named_certs: state.devices });
   if (/^\/api\/clients\/(update|unpair|disconnect)$/.test(p)) {
